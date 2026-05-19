@@ -252,5 +252,5 @@ npm run dev
 
 ## 📅 10. Quản lý dự án (Jira Project Management)
 
-*   🔗 **Link bảng công việc nhóm (Jira Board):** [Jira Project Workspace](https://duyphuongg2410.atlassian.net/jira/software/projects/KAN/list?jql=project+%3D+KAN+ORDER+BY+cf%5B10019%5D+ASC&atlOrigin=eyJpIjoiNTMyMzQ2NmNiNjZmNGU4ZjhlMWRiODU0OGYxNTBlY2IiLCJwIjoiaiJ9)
+*   🔗 **Link bảng công việc nhóm (Jira Board):** [Jira Project Workspace](https://fptu-swr302.atlassian.net)
 
