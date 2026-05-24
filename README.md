@@ -1,42 +1,28 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/Course-SWR302-blue?style=for-the-badge&logo=fpt" alt="Course" />
-  <img src="https://img.shields.io/badge/Model-Hybrid%20Platform-success?style=for-the-badge" alt="Model" />
-  <img src="https://img.shields.io/badge/Framework-Spring%20Boot-6DB33F?style=for-the-badge&logo=Spring" alt="Spring Boot" />
-  <img src="https://img.shields.io/badge/Frontend-ReactJS-61DAFB?style=for-the-badge&logo=React" alt="React" />
-  <br /><br />
-  
-  <h1>🚀 CodeElite</h1>
+  <img src="LOGO.png" alt="Nonstop Coding Logo" width="300" />
   <h3>Integrated E-Learning Marketplace & Competitive Programming Platform</h3>
-  
-  <p>
-    <b>Đồ án môn học:</b> Software Requirements (SWR302)<br/>
-    <b>Mô hình hệ thống:</b> Hybrid Platform (Udemy's Marketplace Model + LeetCode/Codeforces's Online Judge Model)
-  </p>
 </div>
 
 ---
 
 <details open>
   <summary><b>📑 Mục lục (Table of Contents)</b></summary>
-  <ol>
-    <li><a href="#-1-giới-thiệu-dự-án-introduction">Giới thiệu dự án (Introduction)</a></li>
-    <li><a href="#-2-hàm-lượng-nghiên-cứu-rbl---research-based-learning">Hàm lượng nghiên cứu (RBL - Research-Based Learning)</a></li>
-    <li><a href="#-3-mô-hình-tác-nhân--phân-quyền-actors--roles">Mô hình Tác nhân & Phân quyền (Actors & Roles)</a></li>
-    <li><a href="#-4-tính-năng-cốt-lõi-core-features">Tính năng cốt lõi (Core Features)</a></li>
-    <li><a href="#-5-công-nghệ-sử-dụng-tech-stack">Công nghệ sử dụng (Tech Stack)</a></li>
-    <li><a href="#-6-kiến-trúc-hệ-thống-system-architecture">Kiến trúc hệ thống (System Architecture)</a></li>
-    <li><a href="#-7-hướng-dẫn-cài-đặt--khởi-chạy-setup-instructions">Hướng dẫn Cài đặt & Khởi chạy (Setup Instructions)</a></li>
-    <li><a href="#-8-tài-liệu-đặc-tả-đính-kèm-documentation">Tài liệu Đặc tả đính kèm (Documentation)</a></li>
-    <li><a href="#-9-thành-viên-nhóm-team-members">Thành viên nhóm (Team Members)</a></li>
-    <li><a href="#-10-quản-lý-dự-án-jira-project-management">Quản lý dự án (Jira Project Management)</a></li>
-  </ol>
+
+| | NỘI DUNG CHÍNH (MAIN TOPICS) | | TÀI LIỆU & THÔNG TIN (DOCS & INFO) |
+| :---: | :--- | :---: | :--- |
+| 🎯 | [**1. Giới thiệu dự án (Introduction)**](#-1-giới-thiệu-dự-án-introduction) | 🏗️ | [**6. Kiến trúc hệ thống (Architecture)**](#-6-kiến-trúc-hệ-thống-system-architecture) |
+| 🔬 | [**2. Hàm lượng nghiên cứu (RBL)**](#-2-hàm-lượng-nghiên-cứu-rbl---research-based-learning) | 🚀 | [**7. Hướng dẫn Cài đặt (Setup Instructions)**](#-7-hướng-dẫn-cài-đặt--khởi-chạy-setup-instructions) |
+| 👥 | [**3. Tác nhân & Phân quyền (Roles)**](#-3-mô-hình-tác-nhân--phân-quyền-actors--roles) | 📂 | [**8. Tài liệu Đặc tả (Documentation)**](#-8-tài-liệu-đặc-tả-đính-kèm-documentation) |
+| 🧩 | [**4. Tính năng cốt lõi (Core Features)**](#-4-tính-năng-cốt-lõi-core-features) | 🧑‍💻 | [**9. Thành viên nhóm (Team Members)**](#-9-thành-viên-nhóm-team-members) |
+| 🛠️ | [**5. Công nghệ sử dụng (Tech Stack)**](#-5-công-nghệ-sử-dụng-tech-stack) | 📅 | [**10. Quản lý dự án (Jira Project)**](#-10-quản-lý-dự-án-jira-project-management) |
+
 </details>
 
 ---
 
 ## 🎯 1. Giới thiệu dự án (Introduction)
 
-**CodeElite** là một nền tảng ứng dụng Web hoạt động theo mô hình lai (Hybrid) độc đáo. Hệ thống giải quyết trọn vẹn hai bài toán lớn trong ngành EdTech hiện nay:
+**Nonstop Coding** là một nền tảng ứng dụng Web hoạt động theo mô hình lai (Hybrid) độc đáo. Hệ thống giải quyết trọn vẹn hai bài toán lớn trong ngành EdTech hiện nay:
 
 1. 🛒 **Sàn thương mại điện tử khóa học (Marketplace):** Cho phép các Giảng viên tự do (Instructors) đăng ký, tạo khóa học, định giá và nhận doanh thu.
 2. 💻 **Nền tảng thi đấu & luyện tập thuật toán (Online Judge):** Cung cấp Web-based IDE, tự động biên dịch, chấm điểm mã nguồn (C++, Java, Python...) và cập nhật bảng xếp hạng thời gian thực. Bài tập thuật toán được tích hợp linh hoạt: *Cuối mỗi bài học, trong danh sách luyện tập chung, hoặc trong các Kỳ thi (Contests) có tính giờ.*
