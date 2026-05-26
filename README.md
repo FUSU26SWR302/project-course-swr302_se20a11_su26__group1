@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="LOGO.png" alt="Nonstop Coding Logo" width="300" />
+  <img src="./image/LOGO.png" alt="Nonstop Coding Logo" width="300" />
   <h3>Integrated E-Learning Marketplace & Competitive Programming Platform</h3>
 </div>
 
