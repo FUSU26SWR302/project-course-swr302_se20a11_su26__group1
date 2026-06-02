@@ -240,3 +240,6 @@ npm run dev
 
 *   🔗 **Link bảng công việc nhóm (Jira Board):** [Jira Project Workspace](https://duyphuongg2410.atlassian.net/jira/software/projects/SS/boards/3/backlog?atlOrigin=eyJpIjoiOGYyYzEwNDZjODQ5NGY0ZmJiOGM2M2JmZGZmNDkzMDEiLCJwIjoiaiJ9)
 
+## 📅 11. Quản lý dự án Overleaf (Overleaf Project Management)
+
+*   🔗 **Link viết paper nhóm :** [Overleaf Project Workspace](https://www.overleaf.com/9132633444bzzhnpyhpjtt#b76259)
