@@ -15,6 +15,7 @@
 | 👥 | [**3. Tác nhân & Phân quyền (Roles)**](#-3-mô-hình-tác-nhân--phân-quyền-actors--roles) | 📂 | [**8. Tài liệu Đặc tả (Documentation)**](#-8-tài-liệu-đặc-tả-đính-kèm-documentation) |
 | 🧩 | [**4. Tính năng cốt lõi (Core Features)**](#-4-tính-năng-cốt-lõi-core-features) | 🧑‍💻 | [**9. Thành viên nhóm (Team Members)**](#-9-thành-viên-nhóm-team-members) |
 | 🛠️ | [**5. Công nghệ sử dụng (Tech Stack)**](#-5-công-nghệ-sử-dụng-tech-stack) | 📅 | [**10. Quản lý dự án (Jira Project)**](#-10-quản-lý-dự-án-jira-project-management) |
+| | | 📋 | [**11. Quản lý dự án Overleaf (Overleaf Project)**](#-11-quản-lý-dự-án-overleaf-overleaf-project-management) |
 
 </details>
 
