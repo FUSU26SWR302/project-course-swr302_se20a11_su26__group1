@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useApp } from '../context/AppContext';
+import { fetchCourseDetail } from '../services/courseService';
 
 interface StarIcon {
   icon: string;
@@ -22,91 +24,78 @@ interface CartItem {
   stars: StarIcon[];
 }
 
-const INITIAL_CART_ITEMS: CartItem[] = [
-  {
-    id: 'c1_java_beg',
-    title: 'Java Programming for Complete Beginners',
-    author: 'in28Minutes',
-    rating: 4.6,
-    reviewsCount: '53k',
-    duration: '60.5h',
-    lectures: 732,
-    level: 'Beginner',
-    price: 379000,
-    originalPrice: 2139000,
-    discountPercentage: 82,
-    imageUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBhtYZDx8d70kL8xe3qnk-oeCGLejKW9UZ16H659ZDdlq31H7gKSgLpqV5_NZX1mQ05DQM1zPqstOP1_8tvRTJaBJxFeLj8PX0BimRUezyRE2JLPnMH1izLP8dCs2uKl6rsFxV1NkxiSdmJepioIqxz4d7MEVtoq4t0whf4NCOLW5WLAWUkEKIBxk19Ojtv8ythp0bInWWd8DJgmtk7b1D2eM-d4Y_eyX0bo3ZOU6L5bvkPAygMZwJ156ABJc8tfr4F7txvGwheFLQ',
-    stars: [
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star_half', fill: true }
-    ]
-  },
-  {
-    id: 'c2_java_master',
-    title: 'Java Masterclass 2025',
-    author: 'Tim Buchalka',
-    rating: 4.6,
-    reviewsCount: '213k',
-    duration: '135.5h',
-    lectures: 739,
-    level: 'All Levels',
-    price: 409000,
-    originalPrice: 2499000,
-    discountPercentage: 83,
-    imageUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBRO6E3aPtPZPC5fp6pW5XSjS26sTmj8K8cF6v_eVZlq6e46gHgx5UoYoc5lCQPEWpd3blmJD_QfO68NWzlKHd2g94x3629t3dRbp9PVC72Ik8o6Q-CPdlCfmsn4heh_iSMl5YlcHl9aDsBS4HihxXR2KKZO266xVqg4bR0uh80V0RG483YkJIDKBU_vu0XpjDMbHFiyIvfMJqfspQ3UpMT4A3RTXujjmUA_6JA8pkcaeTv0BP98kmV78AdpVcIlG2QWLHON_lmqGY',
-    stars: [
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star_half', fill: true }
-    ]
-  },
-  {
-    id: 'c3_java_backend',
-    title: 'Lập trình Java Backend Full Steps',
-    author: 'Tây Java',
-    rating: 4.4,
-    reviewsCount: '78',
-    duration: '20h',
-    lectures: 25,
-    level: 'All Levels',
-    price: 279000,
-    originalPrice: 1179000,
-    discountPercentage: 76,
-    imageUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDbOyWsUO6H6SKRKwdort_nghveay6OX1ocDLCmXJHHNd8HrsxBJ44dHPawRPBVQOlLiyZG4nkQXQ6y8eMGpts9FMOnuj9Sw0_AEDIujRvB23OD6njiGFx5GxmZxEdUEd7hPqdyZYbifTGwrlnH3uyes3S_aFal7Yk7vcY43zXpd89VTgO4r8p88c8V32ipTPtzZxWyysKUz73sNb0F3ExYoHSmr6S0C2G0KcfUJu2ultLotwOUlvzyUtmbosd_Hhn-m9woBH4A_vk',
-    stars: [
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star', fill: true },
-      { icon: 'star_border', fill: false }
-    ]
-  }
-];
-
 export const ShoppingCart: React.FC = () => {
   const navigate = useNavigate();
-  const [cartItems, setCartItems] = useState<CartItem[]>(INITIAL_CART_ITEMS);
-  const [walletBalance, setWalletBalance] = useState(1500000);
+  const { cart, removeFromCart, checkoutCart, user, clearCart, refreshBalance } = useApp();
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [loading, setLoading] = useState(false);
   const [couponCode, setCouponCode] = useState('');
   const [couponDiscount, setCouponDiscount] = useState(0); // extra discount in percent
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  
+  const walletBalance = user?.walletBalance || 0;
+
+  useEffect(() => {
+    if (user) {
+      refreshBalance().catch(console.error);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadCartItems = async () => {
+      setLoading(true);
+      try {
+        const itemPromises = cart.map(id => fetchCourseDetail(id));
+        const details = await Promise.all(itemPromises);
+        
+        const mappedItems: CartItem[] = details.map(course => {
+          const stars: StarIcon[] = [];
+          for (let i = 1; i <= 5; i++) {
+            stars.push({
+              icon: i <= course.averageRating ? 'star' : i - 0.5 <= course.averageRating ? 'star_half' : 'star_border',
+              fill: i <= course.averageRating || i - 0.5 <= course.averageRating
+            });
+          }
+          const originalPrice = course.price > 0 ? Math.round(course.price * 1.3) : 0; 
+          const discountPercentage = originalPrice > 0 ? Math.round(((originalPrice - course.price) / originalPrice) * 100) : 0;
+          
+          return {
+            id: course.id.toString(),
+            title: course.title,
+            author: course.instructorName || 'Unknown Instructor',
+            rating: course.averageRating || 0,
+            reviewsCount: course.totalReviews?.toString() || '0',
+            duration: `${Math.max(1, Math.round((course.totalLessons || 10) * 1.5))}h`, 
+            lectures: course.totalLessons || 0,
+            level: course.categoryName || 'All Levels',
+            price: course.price,
+            originalPrice: originalPrice,
+            discountPercentage: discountPercentage,
+            imageUrl: course.thumbnailUrl,
+            stars: stars
+          };
+        });
+        setCartItems(mappedItems);
+      } catch (error) {
+        console.error("Failed to load cart items", error);
+        setErrorMessage("Failed to load cart from server.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    if (cart.length > 0) {
+      loadCartItems();
+    } else {
+      setCartItems([]);
+    }
+  }, [cart]);
 
   const subTotal = cartItems.reduce((sum, item) => sum + item.price, 0);
-  const originalTotal = cartItems.reduce((sum, item) => sum + item.originalPrice, 0);
   
   // Calculate final total based on standard items price and the applied coupon discount
   const finalTotal = subTotal * (1 - couponDiscount / 100);
-
-  // Recalculate total discount percentage dynamically
-  const averageDiscountPercent = originalTotal > 0 
-    ? Math.round(((originalTotal - finalTotal) / originalTotal) * 100) 
-    : 0;
 
   const handleApplyCoupon = (e: React.FormEvent) => {
     e.preventDefault();
@@ -124,29 +113,37 @@ export const ShoppingCart: React.FC = () => {
   };
 
   const handleRemoveItem = (id: string) => {
-    setCartItems(prev => prev.filter(item => item.id !== id));
+    removeFromCart(id);
   };
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cartItems.length === 0) {
-      setErrorMessage('Giỏ hàng của bạn đang trống.');
+      setErrorMessage('Your cart is empty.');
       setSuccessMessage('');
+      return;
+    }
+
+    if (!user) {
+      setErrorMessage('Please login to checkout.');
       return;
     }
 
     if (walletBalance < finalTotal) {
-      setErrorMessage('Không đủ số dư ví! Vui lòng nạp thêm tiền để thực hiện giao dịch.');
+      setErrorMessage('Insufficient wallet balance! Please deposit to proceed.');
       setSuccessMessage('');
       return;
     }
 
-    setWalletBalance(prev => prev - finalTotal);
-    setSuccessMessage('Thanh toán thành công! Khóa học đã được đăng ký vào tài khoản của bạn.');
-    setErrorMessage('');
-    setCartItems([]);
-    setTimeout(() => {
-      navigate('/dashboard');
-    }, 2500);
+    const success = await checkoutCart(finalTotal, cartItems.map(item => ({ id: item.id, title: item.title, price: item.price })));
+    if (success) {
+      setSuccessMessage('Checkout successful! Courses have been added to your account.');
+      setErrorMessage('');
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 2500);
+    } else {
+      setErrorMessage('Checkout failed. Please try again later.');
+    }
   };
 
   return (
@@ -175,21 +172,35 @@ export const ShoppingCart: React.FC = () => {
         </div>
       )}
 
-      {cartItems.length === 0 && !successMessage ? (
+      {loading ? (
+        <div className="bg-surface rounded-2xl border border-gray-150 p-12 text-center flex flex-col items-center justify-center gap-4 shadow-sm relative z-10">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mb-4"></div>
+          <h3 className="font-display font-black text-xl text-brand-blue">Loading cart...</h3>
+        </div>
+      ) : cartItems.length === 0 && !successMessage ? (
         <div className="bg-surface rounded-2xl border border-gray-150 p-12 text-center flex flex-col items-center justify-center gap-4 shadow-sm relative z-10">
           <div className="w-16 h-16 rounded-full bg-gray-100 text-text-muted flex items-center justify-center">
             <span className="material-symbols-outlined text-4xl">shopping_cart_off</span>
           </div>
-          <h3 className="font-display font-black text-xl text-brand-blue">Giỏ hàng của bạn đang trống</h3>
-          <p className="font-body text-sm text-text-muted max-w-sm">Hãy khám phá các khóa học công nghệ đỉnh cao và tìm kiếm kiến thức phù hợp với mục tiêu của bạn.</p>
+          <h3 className="font-display font-black text-xl text-brand-blue">Your cart is empty</h3>
+          <p className="font-body text-sm text-text-muted max-w-sm">Discover top tech courses and find the knowledge that fits your goals.</p>
           <Link to="/courses" className="bg-primary hover:bg-primary-hover text-white font-bold text-sm uppercase px-6 py-3 rounded-xl transition-all shadow-md">
-            Khám phá khóa học
+            Explore courses
           </Link>
         </div>
       ) : (
         <div className="flex flex-col lg:flex-row gap-gutter items-start">
           {/* Left Column: Cart Items */}
           <div className="w-full lg:w-[70%] space-y-md">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-xl font-bold text-text-main">{cartItems.length} Course{cartItems.length !== 1 ? 's' : ''} in Cart</h2>
+              <button 
+                onClick={clearCart}
+                className="text-primary hover:text-primary-hover font-semibold underline text-sm transition-colors cursor-pointer"
+              >
+                Remove All
+              </button>
+            </div>
             {cartItems.map((item) => (
               <div 
                 key={item.id} 
@@ -222,10 +233,6 @@ export const ShoppingCart: React.FC = () => {
                     </div>
                     <div className="flex flex-wrap gap-sm font-body-md text-caption text-text-muted">
                       <span className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[14px]">schedule</span> 
-                        {item.duration}
-                      </span>
-                      <span className="flex items-center gap-1">
                         <span className="material-symbols-outlined text-[14px]">menu_book</span> 
                         {item.lectures} lectures
                       </span>
@@ -239,19 +246,11 @@ export const ShoppingCart: React.FC = () => {
                     >
                       Remove
                     </button>
-                    <button className="text-text-muted hover:text-text-main font-label-md text-caption">Save for later</button>
-                    <button className="text-text-muted hover:text-text-main font-label-md text-caption">Move to wishlist</button>
                   </div>
                 </div>
                 <div className="flex flex-col items-end shrink-0 sm:pl-md border-t sm:border-t-0 sm:border-l border-outline-variant/30 pt-md sm:pt-0 w-full sm:w-auto">
                   <span className="font-headline-md text-headline-md text-primary font-bold">
                     {item.price.toLocaleString('vi-VN')}đ
-                  </span>
-                  <span className="font-body-md text-caption text-text-muted line-through">
-                    {item.originalPrice.toLocaleString('vi-VN')}đ
-                  </span>
-                  <span className="bg-red-100 text-red-700 font-caption text-caption px-2 py-1 rounded mt-xs font-semibold">
-                    Discount {item.discountPercentage}%
                   </span>
                 </div>
               </div>
@@ -279,17 +278,9 @@ export const ShoppingCart: React.FC = () => {
                     </Link>
                   </div>
                 </div>
-                <div className="font-label-md text-body-md text-text-muted">Total:</div>
+                <div className="font-label-md text-body-md text-text-muted">Total Price:</div>
                 <div className="font-display-lg-mobile text-display-lg-mobile font-bold text-text-main tracking-tight">
                   {finalTotal.toLocaleString('vi-VN')}đ
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-body-md text-body-md text-text-muted line-through">
-                    {originalTotal.toLocaleString('vi-VN')}đ
-                  </span>
-                  <span className="text-red-600 font-label-md text-label-md font-semibold">
-                    Discount {averageDiscountPercent}%
-                  </span>
                 </div>
               </div>
               

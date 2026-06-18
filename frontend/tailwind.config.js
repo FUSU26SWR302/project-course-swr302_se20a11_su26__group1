@@ -17,7 +17,12 @@ export default {
         "surface-gray": "#f8f9fa",
         "text-main": "#12284C",
         "text-muted": "#64748b",
-        "outline-variant": "#cbd5e1"
+        "outline-variant": "#cbd5e1",
+        "error": "#dc2626",
+        "error-container": "#fee2e2",
+        "on-error-container": "#991b1b",
+        "warning-container": "#fef3c7",
+        "on-warning-container": "#92400e"
       },
       borderRadius: {
         DEFAULT: "0.25rem",
@@ -40,8 +45,8 @@ export default {
         "margin-desktop": "64px"
       },
       fontFamily: {
-        headline: ["Outfit", "sans-serif"],
-        display: ["Outfit", "sans-serif"],
+        headline: ["Plus Jakarta Sans", "sans-serif"],
+        display: ["Plus Jakarta Sans", "sans-serif"],
         body: ["Inter", "sans-serif"],
         label: ["Inter", "sans-serif"]
       },

@@ -1,30 +1,172 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { useApp } from '../context/AppContext';
+
+interface Contest {
+  id: number;
+  title: string;
+  description: string;
+  scoringRule: string;
+  startTime: string; 
+  endTime: string;
+  durations: number;
+  status: 'UPCOMING' | 'ONGOING' | 'ENDED';
+  creatorName: string;
+  isPrivate: boolean;
+  participantCount?: number;
+  problemCount?: number;
+  isUserRegistered?: boolean;
+}
+
+interface UserStats {
+  avatarUrl?: string;
+  displayName?: string;
+  score?: number;
+  rank?: number;
+  totalUsers?: number;
+  contestsCount?: number;
+  avgAccuracy?: number;
+}
 
 export const Contests: React.FC = () => {
+  const { user } = useApp();
+  const timeOffsetRef = useRef<number>(0);
+
   // --- States for Interactivity ---
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [accessFilter, setAccessFilter] = useState('All');
 
-  // --- Relative Countdown Timer Setup ---
-  // Calculates a relative target exactly 3 days, 14 hours, 45 minutes, 20 seconds from launch
-  const [targetTime] = useState(() => Date.now() + (3 * 24 * 60 * 60 + 14 * 60 * 60 + 45 * 60 + 20) * 1000);
+  // --- States for Dynamic Data and Pagination ---
+  const [contests, setContests] = useState<Contest[]>([]);
+  const [currentPage, setCurrentPage] = useState(0); // 0-indexed for Spring Boot
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalElements, setTotalElements] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // --- Banner & User Stats States ---
+  const [bannerContest, setBannerContest] = useState<Contest | null>(null);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
+
+  // --- Fetch Contests List ---
+  useEffect(() => {
+    const fetchContests = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(
+          `http://localhost:8080/nonstopcoding/contests?search=${searchQuery}&status=${statusFilter}&access=${accessFilter}&page=${currentPage}&size=5`,
+          {
+            credentials: 'include',
+          }
+        );
+        const data = await response.json();
+        
+        if (data && data.result) {
+          setContests(data.result.content);
+          setTotalPages(data.result.totalPages);
+          setTotalElements(data.result.totalElements);
+          if (data.timestamp) {
+            timeOffsetRef.current = new Date(data.timestamp).getTime() - Date.now();
+          }
+        }
+      } catch (error) {
+        console.error("Lỗi khi fetch data contest:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    const delayDebounceFn = setTimeout(() => {
+      void fetchContests();
+    }, 400);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery, statusFilter, accessFilter, currentPage]);
+
+  const fetchBannerAndStats = useCallback(async () => {
+    try {
+      const bannerRes = await fetch('http://localhost:8080/nonstopcoding/contests/banner', {
+        credentials: 'include'
+      });
+      const bannerData = await bannerRes.json();
+      if (bannerData) {
+        setBannerContest(bannerData.result);
+        if (bannerData.timestamp) {
+          timeOffsetRef.current = new Date(bannerData.timestamp).getTime() - Date.now();
+        }
+      }
+
+      if (user) {
+        const statsRes = await fetch('http://localhost:8080/nonstopcoding/contests/user-stats', {
+          credentials: 'include'
+        });
+        const statsData = await statsRes.json();
+        if (statsData && statsData.result) {
+          setUserStats(statsData.result);
+        }
+      } else {
+        setUserStats(null);
+      }
+    } catch (error) {
+      console.error("Error fetching banner or stats:", error);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void fetchBannerAndStats();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [fetchBannerAndStats]);
+
+  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setStatusFilter(e.target.value);
+    setCurrentPage(0);
+  };
+
+  const handleAccessChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setAccessFilter(e.target.value);
+    setCurrentPage(0);
+  };
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(e.target.value);
+    setCurrentPage(0);
+  };
+
+  const formatTime = (isoString: string) => {
+    if (!isoString) return '';
+    return new Date(isoString).toLocaleString('en-US', {
+      month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+  };
+
+  // --- Banner Countdown Timer Setup ---
   const [timeLeft, setTimeLeft] = useState({
-    days: '03',
-    hours: '14',
-    mins: '45',
-    secs: '20',
+    days: '00',
+    hours: '00',
+    mins: '00',
+    secs: '00',
     isLive: false
   });
 
   useEffect(() => {
+    if (!bannerContest) return;
+
+    const startTimeMs = new Date(bannerContest.startTime).getTime();
+
     const updateCountdown = () => {
-      const now = Date.now();
-      const difference = targetTime - now;
+      const now = Date.now() + timeOffsetRef.current;
+      const difference = startTimeMs - now;
 
       if (difference <= 0) {
-        setTimeLeft(prev => ({ ...prev, isLive: true }));
+        setTimeLeft({
+          days: '00',
+          hours: '00',
+          mins: '00',
+          secs: '00',
+          isLive: true
+        });
       } else {
         const days = Math.floor(difference / (1000 * 60 * 60 * 24));
         const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -44,70 +186,12 @@ export const Contests: React.FC = () => {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [targetTime]);
-
-  // --- Live Ticket Registrants Simulation ---
-  const [registrants, setRegistrants] = useState(9425);
-  const maxRegistrants = 10000;
-
-  useEffect(() => {
-    const simulateRegistrations = () => {
-      setRegistrants(prev => {
-        if (prev < maxRegistrants - 2) {
-          const increment = Math.floor(Math.random() * 3) + 1;
-          return Math.min(prev + increment, maxRegistrants - 2);
-        }
-        return prev;
-      });
-    };
-
-    const interval = setInterval(simulateRegistrations, 15000);
-    return () => clearInterval(interval);
-  }, []);
+  }, [bannerContest]);
 
   // --- Registration & Modal States ---
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalContestTitle, setModalContestTitle] = useState('');
-  const [modalTicketId, setModalTicketId] = useState('');
-  const [registeredButtons, setRegisteredButtons] = useState<Record<string, boolean>>({});
-  const [heroRegisterCount, setHeroRegisterCount] = useState(0);
-
-  const handleRegister = (contestTitle: string, buttonId: string) => {
-    setModalContestTitle(contestTitle);
-    
-    // Generate a random high-fidelity ticket id
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const randomChar = chars[Math.floor(Math.random() * chars.length)] + chars[Math.floor(Math.random() * chars.length)];
-    setModalTicketId(`NS-${randomNum}-${randomChar}`);
-
-    setIsModalOpen(true);
-    setRegisteredButtons(prev => ({ ...prev, [buttonId]: true }));
-
-    if (contestTitle === 'Nonstop Spring Clash 2026') {
-      setHeroRegisterCount(1);
-    }
-  };
-
-  // --- Filtering Logic ---
-  const isCardVisible = (title: string, status: string) => {
-    const matchesSearch = title.toLowerCase().includes(searchQuery.toLowerCase().trim());
-    const matchesStatus = statusFilter === 'All' || status === statusFilter;
-    return matchesSearch && matchesStatus;
-  };
-
-  const matchCount = [
-    isCardVisible("Weekly Algorithm Sprint #45", "Ongoing"),
-    isCardVisible("Data Structures Challenge Series", "Ongoing"),
-    isCardVisible("Code Masters Championship 2026", "Upcoming"),
-    isCardVisible("Beginner's Python Bash", "Upcoming"),
-    isCardVisible("SQL Mastery Arena", "Upcoming"),
-    isCardVisible("Intro to DP Challenge", "Ended"),
-    isCardVisible("Advanced Graph Theory Scrimmage", "Ended")
-  ].filter(Boolean).length;
-
-  const totalRegistrants = registrants + heroRegisterCount;
-  const percentage = (totalRegistrants / maxRegistrants) * 100;
+  const [modalContestTitle, _setModalContestTitle] = useState('');
+  const [modalTicketId, _setModalTicketId] = useState('');
 
   // Image fallback handler
   const handleAvatarError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
@@ -174,118 +258,113 @@ export const Contests: React.FC = () => {
         <div className="absolute -bottom-40 left-1/4 w-[600px] h-[600px] bg-[#3b82f6]/5 rounded-full blur-[150px]"></div>
       </div>
 
-      {/* Hero Promo Banner: Upcoming Hot Contest */}
-      <section className="relative z-10 bg-gradient-to-br from-brand-blue via-[#173059] to-brand-blue rounded-2xl p-8 md:p-10 flex flex-col lg:flex-row items-center justify-between gap-8 text-white shadow-xl overflow-hidden border border-white/10">
-        {/* Tech Graphics Backdrop */}
-        <div className="absolute top-0 right-0 w-full h-full opacity-10 pointer-events-none overflow-hidden">
-          <span className="material-symbols-outlined absolute -right-16 -top-16 text-[320px] text-primary/30 font-thin select-none">emoji_events</span>
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(243,111,33,0.15),transparent_60%)]"></div>
-        </div>
-
-        {/* Details */}
-        <div className="relative z-10 flex flex-col gap-5 max-w-3xl">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1 bg-primary text-white font-extrabold text-[10px] md:text-xs uppercase tracking-widest px-3 py-1 rounded-full animate-pulse shadow-md">
-              <span className="w-1.5 h-1.5 rounded-full bg-white"></span> Live Spotlight
-            </span>
-            <span className="text-[10px] md:text-xs text-white/70 bg-white/10 px-2.5 py-1 rounded-full font-medium">Spring Season 2026</span>
-          </div>
-          <div>
-            <h2 className="font-display text-3xl md:text-5xl font-black mb-2 leading-tight tracking-tight bg-gradient-to-r from-white via-white to-primary-light bg-clip-text text-transparent">
-              Nonstop Spring Clash 2026
-            </h2>
-            <p className="font-body text-sm md:text-base text-white/80 max-w-2xl mt-2 leading-relaxed">
-              Compete with over <span className="text-primary font-bold">10,000+ developers</span> worldwide. Solve 5 algorithmic challenges, win cash prizes, and lock in your legendary gold profile badge.
-            </p>
+      {/* Hero Promo Banner: Upcoming / Ongoing Hot Contest */}
+      {bannerContest && (
+        <section className="relative z-10 bg-gradient-to-br from-brand-blue via-[#173059] to-brand-blue rounded-2xl p-8 md:p-10 flex flex-col lg:flex-row items-center justify-between gap-8 text-white shadow-xl overflow-hidden border border-white/10">
+          {/* Tech Graphics Backdrop */}
+          <div className="absolute top-0 right-0 w-full h-full opacity-10 pointer-events-none overflow-hidden">
+            <span className="material-symbols-outlined absolute -right-16 -top-16 text-[320px] text-primary/30 font-thin select-none">emoji_events</span>
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(243,111,33,0.15),transparent_60%)]"></div>
           </div>
 
-          {/* Glassmorphism Stats Cards */}
-          <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-lg mt-1">
-            <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-xl p-3 flex flex-col items-center justify-center text-center">
-              <span className="material-symbols-outlined text-primary text-2xl mb-1 icon-fill">emoji_events</span>
-              <span className="text-[10px] text-white/60 font-semibold uppercase tracking-wider">Prize Pool</span>
-              <span className="text-xs md:text-base font-bold text-white mt-0.5">10M VND</span>
-            </div>
-            <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-xl p-3 flex flex-col items-center justify-center text-center">
-              <span className="material-symbols-outlined text-brand-green text-2xl mb-1">timer</span>
-              <span className="text-[10px] text-white/60 font-semibold uppercase tracking-wider">Duration</span>
-              <span className="text-xs md:text-base font-bold text-white mt-0.5">3 Hours</span>
-            </div>
-            <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-xl p-3 flex flex-col items-center justify-center text-center">
-              <span className="material-symbols-outlined text-blue-400 text-2xl mb-1">quiz</span>
-              <span className="text-[10px] text-white/60 font-semibold uppercase tracking-wider">Challenges</span>
-              <span className="text-xs md:text-base font-bold text-white mt-0.5">5 Tasks</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Countdown & Action Box */}
-        <div className="relative z-10 w-full lg:w-96 bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl p-6 flex flex-col gap-5 items-center text-center shadow-2xl">
-          <div className="w-full">
-            <h4 className="text-[10px] font-bold text-primary-light uppercase tracking-wider mb-3">Clash Begins In</h4>
-            {/* Countdown Clock */}
-            {timeLeft.isLive ? (
-              <span className="text-primary font-bold text-xl">Contest is LIVE!</span>
-            ) : (
-              <div className="flex items-center justify-center gap-2">
-                <div className="flex flex-col items-center bg-brand-blue/60 border border-white/10 rounded-xl p-2.5 min-w-[64px]">
-                  <span className="text-2xl font-black font-display text-white">{timeLeft.days}</span>
-                  <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold">Days</span>
-                </div>
-                <span className="text-xl font-bold text-primary/80 animate-pulse">:</span>
-                <div className="flex flex-col items-center bg-brand-blue/60 border border-white/10 rounded-xl p-2.5 min-w-[64px]">
-                  <span className="text-2xl font-black font-display text-white">{timeLeft.hours}</span>
-                  <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold">Hours</span>
-                </div>
-                <span className="text-xl font-bold text-primary/80 animate-pulse">:</span>
-                <div className="flex flex-col items-center bg-brand-blue/60 border border-white/10 rounded-xl p-2.5 min-w-[64px]">
-                  <span className="text-2xl font-black font-display text-white">{timeLeft.mins}</span>
-                  <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold">Mins</span>
-                </div>
-                <span className="text-xl font-bold text-primary/80 animate-pulse">:</span>
-                <div className="flex flex-col items-center bg-brand-blue/60 border border-white/10 rounded-xl p-2.5 min-w-[64px]">
-                  <span className="text-2xl font-black font-display text-primary">{timeLeft.secs}</span>
-                  <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold">Secs</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Registration Progress */}
-          <div className="w-full flex flex-col gap-2">
-            <div className="flex justify-between items-center text-xs font-semibold text-white/70">
-              <span className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">groups</span>
-                <span>{totalRegistrants.toLocaleString()}</span> / 10,000 Slots
+          {/* Details */}
+          <div className="relative z-10 flex flex-col gap-5 max-w-3xl">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1 bg-primary text-white font-extrabold text-[10px] md:text-xs uppercase tracking-widest px-3 py-1 rounded-full animate-pulse shadow-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-white"></span> Live Spotlight
               </span>
-              <span className="text-primary font-bold">{percentage.toFixed(1)}% Full</span>
+              <span className="text-[10px] md:text-xs text-white/70 bg-white/10 px-2.5 py-1 rounded-full font-medium">Spring Season 2026</span>
             </div>
-            <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden border border-white/5">
-              <div 
-                className="bg-gradient-to-r from-primary to-orange-400 h-full rounded-full transition-all duration-1000" 
-                style={{ width: `${percentage}%` }}
-              ></div>
+            <div>
+              <h2 className="font-display text-3xl md:text-5xl font-black mb-2 leading-tight tracking-tight bg-gradient-to-r from-white via-white to-primary-light bg-clip-text text-transparent">
+                {bannerContest.title}
+              </h2>
+              <p className="font-body text-sm md:text-base text-white/80 max-w-2xl mt-2 leading-relaxed">
+                {bannerContest.description}
+              </p>
+            </div>
+
+            {/* Glassmorphism Stats Cards */}
+            <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-lg mt-1">
+              <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <span className="material-symbols-outlined text-primary text-2xl mb-1 icon-fill">emoji_events</span>
+                <span className="text-[10px] text-white/60 font-semibold uppercase tracking-wider">Scoring Rule</span>
+                <span className="text-xs md:text-base font-bold text-white mt-0.5">{bannerContest.scoringRule || 'ICPC'}</span>
+              </div>
+              <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <span className="material-symbols-outlined text-brand-green text-2xl mb-1">timer</span>
+                <span className="text-[10px] text-white/60 font-semibold uppercase tracking-wider">Duration</span>
+                <span className="text-xs md:text-base font-bold text-white mt-0.5">{bannerContest.durations || 180} Mins</span>
+              </div>
+              <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <span className="material-symbols-outlined text-blue-400 text-2xl mb-1">quiz</span>
+                <span className="text-[10px] text-white/60 font-semibold uppercase tracking-wider">Challenges</span>
+                <span className="text-xs md:text-base font-bold text-white mt-0.5">{bannerContest.problemCount || 0} Tasks</span>
+              </div>
             </div>
           </div>
 
-          {/* Action Button */}
-          {registeredButtons['hero-register-btn'] ? (
-            <button 
-              disabled 
-              className="w-full py-4 px-6 rounded-xl bg-brand-green text-white font-extrabold text-base transition-all shadow-lg flex items-center justify-center gap-2"
+          {/* Countdown & Action Box */}
+          <div className="relative z-10 w-full lg:w-96 bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl p-6 flex flex-col gap-5 justify-center items-center text-center shadow-2xl">
+            {/* 1. Registration Competitors Count */}
+            <div className="w-full flex justify-center items-center text-sm font-semibold text-white/70">
+              <span className="flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[18px]">groups</span>
+                <span>{(bannerContest.participantCount || 0).toLocaleString()} Competitors Joined</span>
+              </span>
+            </div>
+
+            {/* 2. Countdown Clock or Live Indicator */}
+            <div className="w-full flex flex-col items-center gap-3">
+              <h4 className="text-xs md:text-sm font-extrabold text-white/80 uppercase tracking-widest">
+                {timeLeft.isLive ? 'Contest is Live' : 'Contest Begin In'}
+              </h4>
+              {timeLeft.isLive ? (
+                <span className="text-brand-green font-bold text-lg uppercase tracking-widest flex items-center justify-center gap-1.5 animate-pulse">
+                  <span className="w-2.5 h-2.5 rounded-full bg-brand-green"></span> Contest is LIVE!
+                </span>
+              ) : (
+                <div className="flex items-center justify-center gap-2">
+                  {/* Days */}
+                  <div className="flex flex-col items-center justify-center bg-[#12284C] border border-white/10 rounded-2xl w-16 h-20 shadow-md">
+                    <span className="text-2xl md:text-3xl font-extrabold font-display text-white">{timeLeft.days}</span>
+                    <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold mt-1">Days</span>
+                  </div>
+                  <span className="text-xl font-bold text-white/30 animate-pulse">:</span>
+                  
+                  {/* Hours */}
+                  <div className="flex flex-col items-center justify-center bg-[#12284C] border border-white/10 rounded-2xl w-16 h-20 shadow-md">
+                    <span className="text-2xl md:text-3xl font-extrabold font-display text-white">{timeLeft.hours}</span>
+                    <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold mt-1">Hours</span>
+                  </div>
+                  <span className="text-xl font-bold text-white/30 animate-pulse">:</span>
+                  
+                  {/* Mins */}
+                  <div className="flex flex-col items-center justify-center bg-[#12284C] border border-white/10 rounded-2xl w-16 h-20 shadow-md">
+                    <span className="text-2xl md:text-3xl font-extrabold font-display text-white">{timeLeft.mins}</span>
+                    <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold mt-1">Mins</span>
+                  </div>
+                  <span className="text-xl font-bold text-white/30 animate-pulse">:</span>
+                  
+                  {/* Secs */}
+                  <div className="flex flex-col items-center justify-center bg-[#12284C] border border-white/10 rounded-2xl w-16 h-20 shadow-md">
+                    <span className="text-2xl md:text-3xl font-extrabold font-display text-[#f36f21]">{timeLeft.secs}</span>
+                    <span className="text-[9px] uppercase tracking-wider text-white/60 font-semibold mt-1">Secs</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Action Button: Enter Arena Now */}
+            <Link 
+              to={`/contests/${bannerContest.id}`} 
+              className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-brand-green to-green-600 hover:from-green-600 hover:to-green-700 text-white font-extrabold text-base transition-all transform hover:-translate-y-0.5 active:translate-y-0 shadow-lg pulse-glow-green flex items-center justify-center gap-2"
             >
-              Registered ✔
-            </button>
-          ) : (
-            <button 
-              onClick={() => handleRegister('Nonstop Spring Clash 2026', 'hero-register-btn')} 
-              className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-primary to-orange-500 hover:from-primary-hover hover:to-orange-600 text-white font-extrabold text-base transition-all transform hover:-translate-y-0.5 active:translate-y-0 shadow-lg pulse-glow-orange flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined font-bold">how_to_reg</span> Register For Free
-            </button>
-          )}
-        </div>
-      </section>
+              <span className="material-symbols-outlined font-bold">login</span> Enter Arena Now
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* Combat Layout: Main List & Profile Sidebar */}
       <div className="relative z-10 grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -317,7 +396,7 @@ export const Contests: React.FC = () => {
                 <input 
                   id="search-input" 
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={handleSearchChange}
                   className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-gray-200 bg-surface-gray focus:border-primary focus:ring-2 focus:ring-primary-light outline-none transition-all font-body text-sm text-text-main placeholder-text-muted shadow-inner" 
                   placeholder="Search contests by title..." 
                   type="text" 
@@ -329,7 +408,7 @@ export const Contests: React.FC = () => {
                 <select 
                   id="status-filter" 
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
+                  onChange={handleStatusChange}
                   className="w-full md:w-44 border border-gray-200 rounded-xl px-3 py-2.5 bg-surface font-semibold text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-primary"
                 >
                   <option value="All">Status: All</option>
@@ -340,7 +419,7 @@ export const Contests: React.FC = () => {
                 <select 
                   id="access-filter" 
                   value={accessFilter}
-                  onChange={(e) => setAccessFilter(e.target.value)}
+                  onChange={handleAccessChange}
                   className="w-full md:w-40 border border-gray-200 rounded-xl px-3 py-2.5 bg-surface font-semibold text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-primary"
                 >
                   <option value="All">Access: All</option>
@@ -353,491 +432,212 @@ export const Contests: React.FC = () => {
 
           {/* Contests Card Container */}
           <section id="contests-grid" className="flex flex-col gap-4 text-left">
-            
-            {/* Ongoing Contest 1 */}
-            {isCardVisible("Weekly Algorithm Sprint #45", "Ongoing") && (
-              <article className="contest-card bg-surface rounded-2xl border border-gray-100 hover:border-brand-green/60 p-6 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all shadow-md ambient-shadow-hover group fade-in">
-                <div className="flex-1 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 bg-brand-green text-white font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider pulse-glow-green">
-                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span> Ongoing
-                    </span>
-                    <span className="text-xs bg-brand-blue-light/5 text-brand-blue font-bold px-2 py-0.5 rounded">Sprint League</span>
-                  </div>
-                  <div>
-                    <h3 className="font-display font-extrabold text-lg md:text-xl text-brand-blue group-hover:text-primary transition-colors">
-                      Weekly Algorithm Sprint #45
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        <span>Oct 24, 09:00 AM – Oct 31, 2026</span>
-                      </div>
-                      <span className="text-gray-300">•</span>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">timer</span>
-                        <span>7 Days Remaining</span>
-                      </div>
+            {isLoading ? (
+              <div className="flex justify-center items-center py-12 bg-white rounded-2xl border border-gray-100 shadow-md">
+                <span className="material-symbols-outlined text-primary text-4xl animate-spin">sync</span>
+              </div>
+            ) : contests.length === 0 ? (
+              <div id="zero-state" className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border border-gray-100 shadow-md">
+                <span className="material-symbols-outlined text-text-muted text-5xl mb-2">find_in_page</span>
+                <h3 className="text-base font-bold text-brand-blue">No Contests Found</h3>
+                <p className="text-xs text-text-muted max-w-xs mt-1">Try relaxing your search terms or selecting another status filter.</p>
+              </div>
+            ) : (
+              contests.map((contest) => (
+                <article key={contest.id} className={`contest-card bg-surface rounded-2xl border border-gray-100 p-6 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all shadow-md ambient-shadow-hover group fade-in ${contest.status === 'ONGOING' ? 'hover:border-brand-green/60' : 'hover:border-primary/60'}`}>
+                  <div className="flex-1 flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      {contest.status === 'ONGOING' ? (
+                        <span className="inline-flex items-center gap-1.5 bg-brand-green text-white font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider pulse-glow-green">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span> Ongoing
+                        </span>
+                      ) : contest.status === 'UPCOMING' ? (
+                        <span className="inline-flex items-center gap-1.5 bg-warning-container text-on-warning-container font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider">
+                          <span className="material-symbols-outlined text-[12px] font-bold">schedule</span> Upcoming
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 bg-error/10 text-error font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider">
+                          <span className="material-symbols-outlined text-[12px] font-bold">done</span> Ended
+                        </span>
+                      )}
+                      {contest.isPrivate ? (
+                        <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-[10px] px-2.5 py-1 rounded-full font-bold uppercase">
+                          <span className="material-symbols-outlined text-[12px]">lock</span> Private
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[10px] px-2.5 py-1 rounded-full font-bold uppercase">
+                          <span className="material-symbols-outlined text-[12px]">public</span> Public
+                        </span>
+                      )}
                     </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 shrink-0">
-                  <div className="flex items-center gap-1.5 text-text-muted text-xs font-bold">
-                    <span className="material-symbols-outlined text-[18px] text-[#46A040] icon-fill">group</span>
-                    <span>1,248 Competitors</span>
-                  </div>
-                  <Link to="/contests/1" className="px-5 py-2.5 bg-brand-green hover:bg-green-600 text-white font-extrabold text-xs rounded-xl shadow-md transition-all transform hover:-translate-y-0.5">
-                    Enter Arena
-                  </Link>
-                </div>
-              </article>
-            )}
-
-            {/* Ongoing Contest 2 */}
-            {isCardVisible("Data Structures Challenge Series", "Ongoing") && (
-              <article className="contest-card bg-surface rounded-2xl border border-gray-100 hover:border-brand-green/60 p-6 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all shadow-md ambient-shadow-hover group fade-in">
-                <div className="flex-1 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 bg-brand-green text-white font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider pulse-glow-green">
-                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span> Ongoing
-                    </span>
-                    <span className="text-xs bg-brand-blue-light/5 text-brand-blue font-bold px-2 py-0.5 rounded">Structure Series</span>
-                  </div>
-                  <div>
-                    <h3 className="font-display font-extrabold text-lg md:text-xl text-brand-blue group-hover:text-primary transition-colors">
-                      Data Structures Challenge Series
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        <span>Oct 28, 08:00 AM – Nov 04, 2026</span>
-                      </div>
-                      <span className="text-gray-300">•</span>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">timer</span>
-                        <span>4 Days Remaining</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 shrink-0">
-                  <div className="flex items-center gap-1.5 text-text-muted text-xs font-bold">
-                    <span className="material-symbols-outlined text-[18px] text-[#46A040] icon-fill">group</span>
-                    <span>856 Competitors</span>
-                  </div>
-                  <Link to="/contests/1" className="px-5 py-2.5 bg-brand-green hover:bg-green-600 text-white font-extrabold text-xs rounded-xl shadow-md transition-all transform hover:-translate-y-0.5">
-                    Enter Arena
-                  </Link>
-                </div>
-              </article>
-            )}
-
-            {/* Upcoming Contest 1 */}
-            {isCardVisible("Code Masters Championship 2026", "Upcoming") && (
-              <article className="contest-card bg-surface rounded-2xl border border-gray-100 hover:border-primary/60 p-6 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all shadow-md ambient-shadow-hover group fade-in">
-                <div className="flex-1 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 bg-warning-container text-on-warning-container font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider">
-                      <span className="material-symbols-outlined text-[12px] font-bold">schedule</span> Upcoming
-                    </span>
-                    <span className="text-xs bg-primary-light text-primary font-bold px-2 py-0.5 rounded">Mega Prize</span>
-                  </div>
-                  <div>
-                    <h3 className="font-display font-extrabold text-lg md:text-xl text-brand-blue group-hover:text-primary transition-colors">
-                      Code Masters Championship 2026
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        <span>Nov 15, 10:00 AM – Nov 22, 2026</span>
-                      </div>
-                      <span className="text-gray-300">•</span>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">timer</span>
-                        <span>Starts in 5 days</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 shrink-0">
-                  <div className="flex items-center gap-1.5 text-text-muted text-xs font-bold">
-                    <span className="material-symbols-outlined text-[18px] text-primary">groups</span>
-                    <span>3,500+ Registered</span>
-                  </div>
-                  {registeredButtons['btn-up-1'] ? (
-                    <button 
-                      disabled
-                      className="px-5 py-2.5 bg-brand-green text-white font-extrabold text-xs rounded-xl shadow-md transition-all border border-brand-green/20"
-                    >
-                      Registered ✔
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={() => handleRegister('Code Masters Championship 2026', 'btn-up-1')} 
-                      className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-extrabold text-xs rounded-xl shadow-md transition-all transform hover:-translate-y-0.5"
-                    >
-                      Register Now
-                    </button>
-                  )}
-                </div>
-              </article>
-            )}
-
-            {/* Upcoming Contest 2 */}
-            {isCardVisible("Beginner's Python Bash", "Upcoming") && (
-              <article className="contest-card bg-surface rounded-2xl border border-gray-100 hover:border-primary/60 p-6 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all shadow-md ambient-shadow-hover group fade-in">
-                <div className="flex-1 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 bg-warning-container text-on-warning-container font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider">
-                      <span className="material-symbols-outlined text-[12px] font-bold">schedule</span> Upcoming
-                    </span>
-                    <span className="text-xs bg-blue-50 text-blue-600 font-bold px-2 py-0.5 rounded">Starter Friendly</span>
-                  </div>
-                  <div>
-                    <h3 className="font-display font-extrabold text-lg md:text-xl text-brand-blue group-hover:text-primary transition-colors">
-                      Beginner's Python Bash
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        <span>Nov 20, 09:00 AM – Nov 21, 2026</span>
-                      </div>
-                      <span className="text-gray-300">•</span>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">timer</span>
-                        <span>Starts in 7 days</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 shrink-0">
-                  <div className="flex items-center gap-1.5 text-text-muted text-xs font-bold">
-                    <span className="material-symbols-outlined text-[18px] text-primary">groups</span>
-                    <span>1,200+ Registered</span>
-                  </div>
-                  {registeredButtons['btn-up-2'] ? (
-                    <button 
-                      disabled
-                      className="px-5 py-2.5 bg-brand-green text-white font-extrabold text-xs rounded-xl shadow-md transition-all border border-brand-green/20"
-                    >
-                      Registered ✔
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={() => handleRegister("Beginner's Python Bash", 'btn-up-2')} 
-                      className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-extrabold text-xs rounded-xl shadow-md transition-all transform hover:-translate-y-0.5"
-                    >
-                      Register Now
-                    </button>
-                  )}
-                </div>
-              </article>
-            )}
-
-            {/* Upcoming Contest 3 */}
-            {isCardVisible("SQL Mastery Arena", "Upcoming") && (
-              <article className="contest-card bg-surface rounded-2xl border border-gray-100 hover:border-primary/60 p-6 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all shadow-md ambient-shadow-hover group fade-in">
-                <div className="flex-1 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 bg-warning-container text-on-warning-container font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider">
-                      <span className="material-symbols-outlined text-[12px] font-bold">schedule</span> Upcoming
-                    </span>
-                    <span className="text-xs bg-brand-green/10 text-brand-green font-bold px-2 py-0.5 rounded">Database Skill</span>
-                  </div>
-                  <div>
-                    <h3 className="font-display font-extrabold text-lg md:text-xl text-brand-blue group-hover:text-primary transition-colors">
-                      SQL Mastery Arena
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        <span>Nov 25, 02:00 PM – Nov 25, 2026</span>
-                      </div>
-                      <span className="text-gray-300">•</span>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">timer</span>
-                        <span>Starts in 12 days</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 shrink-0">
-                  <div className="flex items-center gap-1.5 text-text-muted text-xs font-bold">
-                    <span className="material-symbols-outlined text-[18px] text-primary">groups</span>
-                    <span>480+ Registered</span>
-                  </div>
-                  {registeredButtons['btn-up-3'] ? (
-                    <button 
-                      disabled
-                      className="px-5 py-2.5 bg-brand-green text-white font-extrabold text-xs rounded-xl shadow-md transition-all border border-brand-green/20"
-                    >
-                      Registered ✔
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={() => handleRegister('SQL Mastery Arena', 'btn-up-3')} 
-                      className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-extrabold text-xs rounded-xl shadow-md transition-all transform hover:-translate-y-0.5"
-                    >
-                      Register Now
-                    </button>
-                  )}
-                </div>
-              </article>
-            )}
-
-            {/* Ended Contest 1 */}
-            {isCardVisible("Intro to DP Challenge", "Ended") && (
-              <article className="contest-card bg-surface/80 rounded-2xl border border-gray-100 p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all shadow-md ambient-shadow-hover group fade-in">
-                <div className="flex-1 flex flex-col gap-4 w-full">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 bg-error/10 text-error font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider">
-                      <span className="material-symbols-outlined text-[12px] font-bold">done</span> Ended
-                    </span>
-                    <span className="text-xs bg-gray-100 text-text-muted px-2 py-0.5 rounded font-bold">Past Arena</span>
-                  </div>
-                  <div>
-                    <h3 className="font-display font-extrabold text-xl md:text-2xl text-brand-blue group-hover:text-primary transition-colors">
-                      Intro to DP Challenge
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        <span>Oct 01 – Oct 15, 2026</span>
-                      </div>
-                      <span className="text-gray-300">•</span>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">group</span>
-                        <span>4,102 Participated</span>
+                    <div>
+                      <h3 className="font-display font-extrabold text-lg md:text-xl text-brand-blue group-hover:text-primary transition-colors">
+                        {contest.title}
+                      </h3>
+                      <p className="text-sm text-text-muted mt-1 max-w-2xl">{contest.description}</p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
+                        <div className="flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[16px]">calendar_today</span>
+                          <span>{formatTime(contest.startTime)} – {formatTime(contest.endTime)}</span>
+                        </div>
+                        <span className="text-gray-300">•</span>
+                        <div className="flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[16px]">timer</span>
+                          <span>{contest.durations} Mins</span>
+                        </div>
+                        <span className="text-gray-300">•</span>
+                        <div className="flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[16px]">person</span>
+                          <span>Created by {contest.creatorName}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
                   
-                  {/* Expanded Top 3 Winners Horizon Podium Showcase */}
-                  <div className="flex flex-wrap items-center gap-3.5 bg-gradient-to-r from-gray-50 to-[#f8f9fa] rounded-2xl p-5 border border-gray-200/60 mt-1">
-                    {/* 1st */}
-                    <div className="flex items-center gap-2.5 bg-amber-50 border-2 border-amber-300 rounded-full pl-2 pr-4 py-1.5 shadow-md hover:scale-105 transition-all">
-                      <span className="w-7 h-7 rounded-full bg-amber-400 text-white font-black text-xs flex items-center justify-center border border-amber-200 shadow-inner">👑</span>
-                      <img 
-                        alt="AlexChen_99" 
-                        className="w-7 h-7 rounded-full object-cover border border-amber-300" 
-                        onError={handleAvatarError} 
-                        src="https://lh3.googleusercontent.com/aida-public/AB6AXuCp40daqj0h2umuKNNDeVOusREXNgw_12QV4qru-J_UuA4ZdCH-_duC1RsH1iBlluVAhCv_LX4hE1Tn_XF1TlBYCEPgN93KA_POfYKJnd5Ge9nO-7Itcx87rECEaQsnoCQEkKM9kmZCxKC1XEboRfAKWgdDMiYMeE_VSZvWolzI-cDOWC-9CsKWiSpExgxqf-WZmWUFwK3APjd9pwvw33_QyWVOzOIyUwSBPPRILirJJ-8WCBLfWEVlQv4EjnKXB8iJupr4PdSrNb4" 
-                      />
-                      <span className="text-xs font-black text-amber-900">AlexChen_99</span>
-                    </div>
-                    {/* 2nd */}
-                    <div className="flex items-center gap-2.5 bg-slate-50 border-2 border-slate-300 rounded-full pl-2 pr-4 py-1.5 shadow-md hover:scale-105 transition-all">
-                      <span className="w-7 h-7 rounded-full bg-slate-400 text-white font-black text-xs flex items-center justify-center border border-slate-200 shadow-inner">🥈</span>
-                      <img 
-                        alt="SarahCodes" 
-                        className="w-7 h-7 rounded-full object-cover border border-slate-300" 
-                        onError={handleAvatarError} 
-                        src="https://lh3.googleusercontent.com/aida-public/AB6AXuDshCfUQ0QMSGGDqtuWcDFX_490qXob69K70L4NJIXvHDEJEkly5hmHpkJQE0VYJUOm0EEQ69gZ2dg60jKuWAoIKCJb2AFPciDf6D9Lo74JWBRjCxKMZwRGLkEE4MPzCAh6Jk8ALAxsanK7LWgMm4XlZRsnZdTNIdAHCQa0JQbR4HkQW9HGRQaeZF_N6xewqpVJTKVcdSEEqplIyAFUsrbwSI1cEmpkKdrF1rHrpfozZaHAncAw4DCxbCdRdUix9mXBCOW4GQ0HLuI" 
-                      />
-                      <span className="text-xs font-black text-slate-800">SarahCodes</span>
-                    </div>
-                    {/* 3rd */}
-                    <div className="flex items-center gap-2.5 bg-orange-50 border-2 border-orange-300 rounded-full pl-2 pr-4 py-1.5 shadow-md hover:scale-105 transition-all">
-                      <span className="w-7 h-7 rounded-full bg-orange-400 text-white font-black text-xs flex items-center justify-center border border-orange-200 shadow-inner">🥉</span>
-                      <img 
-                        alt="DevMaster" 
-                        className="w-7 h-7 rounded-full object-cover border border-orange-300" 
-                        onError={handleAvatarError} 
-                        src="https://lh3.googleusercontent.com/aida-public/AB6AXuBkHZSQqpXmDrQL_qKJPMdo5wb3oCBOUVxsVVnbnzufzk5gzwHETA-lt9WwTcAtywJ6U0aySuqOREpGq64S_9TRgVTVsq--Q0UM8V07CBBMP4iHOzmx4kiiL6WTbqZwH9-0TefB_jdkjq8YuEB0BwpTHStm6F6Kg4v-hhq8huMKSnePfsgPAjdw0BgBc6sjjREiET3WMLYghC9EvUmyLutnQpH9Khc3MEppZTiN2O4rMR_iCiHJhDR32g7srn3JC3brO2IvNvVFOsM" 
-                      />
-                      <span className="text-xs font-black text-orange-900">DevMaster</span>
+                  {/* Enter Arena button accompanied by (participantCount + Competitors) */}
+                  <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 shrink-0">
+                    <div className="flex flex-col items-center md:items-end gap-1.5">
+                      <Link 
+                        to={`/contests/${contest.id}`} 
+                        className="px-5 py-2.5 bg-brand-green hover:bg-green-600 text-white font-extrabold text-xs rounded-xl shadow-md transition-all transform hover:-translate-y-0.5 text-center min-w-[120px]"
+                      >
+                        Enter Arena
+                      </Link>
+                      <span className="text-[11px] text-text-muted font-bold">
+                        ({contest.participantCount || 0} Competitors)
+                      </span>
                     </div>
                   </div>
-                </div>
-                
-                <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-8 shrink-0">
-                  <span className="text-xs text-text-muted font-bold">100 XP Awarded</span>
-                  <Link to="/contests/1" className="px-5 py-3 bg-surface-gray hover:bg-gray-200 text-text-main border border-gray-200 font-extrabold text-xs rounded-xl shadow-sm transition-all">
-                    View Standings
-                  </Link>
-                </div>
-              </article>
-            )}
-
-            {/* Ended Contest 2 */}
-            {isCardVisible("Advanced Graph Theory Scrimmage", "Ended") && (
-              <article className="contest-card bg-surface/80 rounded-2xl border border-gray-100 p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all shadow-md ambient-shadow-hover group fade-in">
-                <div className="flex-1 flex flex-col gap-4 w-full">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 bg-error/10 text-error font-extrabold text-[10px] px-3 py-1 rounded-full uppercase tracking-wider">
-                      <span className="material-symbols-outlined text-[12px] font-bold">done</span> Ended
-                    </span>
-                    <span className="text-xs bg-gray-100 text-text-muted px-2 py-0.5 rounded font-bold">Past Arena</span>
-                  </div>
-                  <div>
-                    <h3 className="font-display font-extrabold text-xl md:text-2xl text-brand-blue group-hover:text-primary transition-colors">
-                      Advanced Graph Theory Scrimmage
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-muted font-semibold text-xs mt-1.5">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-                        <span>Sep 23 – Sep 30, 2026</span>
-                      </div>
-                      <span className="text-gray-300">•</span>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">group</span>
-                        <span>2,845 Participated</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Expanded Top 3 Winners Horizon Podium Showcase */}
-                  <div className="flex flex-wrap items-center gap-3.5 bg-gradient-to-r from-gray-50 to-[#f8f9fa] rounded-2xl p-5 border border-gray-200/60 mt-1">
-                    {/* 1st */}
-                    <div className="flex items-center gap-2.5 bg-amber-50 border-2 border-amber-300 rounded-full pl-2 pr-4 py-1.5 shadow-md hover:scale-105 transition-all">
-                      <span className="w-7 h-7 rounded-full bg-amber-400 text-white font-black text-xs flex items-center justify-center border border-amber-200 shadow-inner">👑</span>
-                      <img 
-                        alt="GraphKing" 
-                        className="w-7 h-7 rounded-full object-cover border border-amber-300" 
-                        onError={handleAvatarError} 
-                        src="https://lh3.googleusercontent.com/aida-public/AB6AXuBkHZSQqpXmDrQL_qKJPMdo5wb3oCBOUVxsVVnbnzufzk5gzwHETA-lt9WwTcAtywJ6U0aySuqOREpGq64S_9TRgVTVsq--Q0UM8V07CBBMP4iHOzmx4kiiL6WTbqZwH9-0TefB_jdkjq8YuEB0BwpTHStm6F6Kg4v-hhq8huMKSnePfsgPAjdw0BgBc6sjjREiET3WMLYghC9EvUmyLutnQpH9Khc3MEppZTiN2O4rMR_iCiHJhDR32g7srn3JC3brO2IvNvVFOsM" 
-                      />
-                      <span className="text-xs font-black text-amber-900">GraphKing</span>
-                    </div>
-                    {/* 2nd */}
-                    <div className="flex items-center gap-2.5 bg-slate-50 border-2 border-slate-300 rounded-full pl-2 pr-4 py-1.5 shadow-md hover:scale-105 transition-all">
-                      <span className="w-7 h-7 rounded-full bg-slate-400 text-white font-black text-xs flex items-center justify-center border border-slate-200 shadow-inner">🥈</span>
-                      <img 
-                        alt="AlgoBeast" 
-                        className="w-7 h-7 rounded-full object-cover border border-slate-300" 
-                        onError={handleAvatarError} 
-                        src="https://lh3.googleusercontent.com/aida-public/AB6AXuCp40daqj0h2umuKNNDeVOusREXNgw_12QV4qru-J_UuA4ZdCH-_duC1RsH1iBlluVAhCv_LX4hE1Tn_XF1TlBYCEPgN93KA_POfYKJnd5Ge9nO-7Itcx87rECEaQsnoCQEkKM9kmZCxKC1XEboRfAKWgdDMiYMeE_VSZvWolzI-cDOWC-9CsKWiSpExgxqf-WZmWUFwK3APjd9pwvw33_QyWVOzOIyUwSBPPRILirJJ-8WCBLfWEVlQv4EjnKXB8iJupr4PdSrNb4" 
-                      />
-                      <span className="text-xs font-black text-slate-800">AlgoBeast</span>
-                    </div>
-                    {/* 3rd */}
-                    <div className="flex items-center gap-2.5 bg-orange-50 border-2 border-orange-300 rounded-full pl-2 pr-4 py-1.5 shadow-md hover:scale-105 transition-all">
-                      <span className="w-7 h-7 rounded-full bg-orange-400 text-white font-black text-xs flex items-center justify-center border border-orange-200 shadow-inner">🥉</span>
-                      <img 
-                        alt="CodeQueen" 
-                        className="w-7 h-7 rounded-full object-cover border border-amber-300" 
-                        onError={handleAvatarError} 
-                        src="https://lh3.googleusercontent.com/aida-public/AB6AXuDshCfUQ0QMSGGDqtuWcDFX_490qXob69K70L4NJIXvHDEJEkly5hmHpkJQE0VYJUOm0EEQ69gZ2dg60jKuWAoIKCJb2AFPciDf6D9Lo74JWBRjCxKMZwRGLkEE4MPzCAh6Jk8ALAxsanK7LWgMm4XlZRsnZdTNIdAHCQa0JQbR4HkQW9HGRQaeZF_N6xewqpVJTKVcdSEEqplIyAFUsrbwSI1cEmpkKdrF1rHrpfozZaHAncAw4DCxbCdRdUix9mXBCOW4GQ0HLuI" 
-                      />
-                      <span className="text-xs font-black text-orange-900">CodeQueen</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-8 shrink-0">
-                  <span className="text-xs text-text-muted font-bold">120 XP Awarded</span>
-                  <Link to="/contests/1" className="px-5 py-3 bg-surface-gray hover:bg-gray-200 text-text-main border border-gray-200 font-extrabold text-xs rounded-xl shadow-sm transition-all">
-                    View Standings
-                  </Link>
-                </div>
-              </article>
-            )}
-
-            {/* Zero State */}
-            {matchCount === 0 && (
-              <div id="zero-state" className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border border-gray-100 shadow-md">
-                <span className="material-symbols-outlined text-text-muted text-5xl mb-2">find_in_page</span>
-                <h3 className="text-base font-bold text-brand-blue">No Contests Found</h3>
-                <p className="text-xs text-text-muted max-w-xs mt-1">Try relaxing your search terms or selecting another category tag.</p>
-              </div>
+                </article>
+              ))
             )}
           </section>
+
+          {/* Pagination Section */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 rounded-2xl shadow-sm mt-4">
+              <div className="flex flex-1 justify-between sm:hidden">
+                <button
+                  disabled={currentPage === 0}
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 0))}
+                  className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  disabled={currentPage === totalPages - 1}
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages - 1))}
+                  className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+              <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm text-gray-700">
+                    Showing page <span className="font-semibold">{currentPage + 1}</span> of{' '}
+                    <span className="font-semibold">{totalPages}</span> (Total{' '}
+                    <span className="font-semibold">{totalElements}</span> contests)
+                  </p>
+                </div>
+                <div>
+                  <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+                    <button
+                      disabled={currentPage === 0}
+                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 0))}
+                      className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                    >
+                      <span className="sr-only">Previous</span>
+                      <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                    </button>
+                    {Array.from({ length: totalPages }).map((_, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setCurrentPage(idx)}
+                        aria-current={currentPage === idx ? 'page' : undefined}
+                        className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold focus:z-20 ${
+                          currentPage === idx
+                            ? 'z-10 bg-primary text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
+                            : 'text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:outline-offset-0'
+                        }`}
+                      >
+                        {idx + 1}
+                      </button>
+                    ))}
+                    <button
+                      disabled={currentPage === totalPages - 1}
+                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages - 1))}
+                      className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                    >
+                      <span className="sr-only">Next</span>
+                      <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                    </button>
+                  </nav>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Sidebar Combat Profile Widget (1 col) */}
         <aside className="lg:col-span-1 flex flex-col gap-6 w-full lg:sticky lg:top-20 text-left">
           
-          {/* User Combat Profile Widget */}
-          <div className="bg-surface rounded-2xl p-5 border border-gray-100 shadow-md flex flex-col gap-5">
-            <div className="flex items-center gap-3">
-              <img 
-                alt="User Avatar" 
-                className="w-11 h-11 rounded-full border-2 border-primary object-cover" 
-                onError={handleAvatarError} 
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuB98dPVylZwO6vg95FQaD4k-myG1YhY-VGq7du1S8-pcxrZmnhUwx2VzSs1AkC17Ld9sN1YJQziGrBM5Wxg39W1UFKWDjBJkC4p7QnbHP8aEqlD703-2MHTrqIN65tt0QPlOkZY7JTwMAXIas3lEuSOkuv9JT3HAenrdph26Gza-yDSVOVR0WEfHbnhWYtKN5fNK-bLnyjvw5pHNbtgeUVJysTqy7Xeb6TBV9G1g22LmO1UX_2MQ-DV5vRbsXPHEqko_NPdoIjv-Is" 
-              />
-              <div>
-                <h4 className="text-sm font-bold text-brand-blue">Thanh MiLa</h4>
-                <div className="flex items-center gap-1 mt-0.5">
-                  <span className="inline-flex bg-primary/10 text-primary text-[10px] font-extrabold px-2 py-0.5 rounded">Expert League</span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="h-px bg-gray-100"></div>
-            
-            {/* Battle Stats Grid */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Contest Score</span>
-                <span className="text-lg font-black text-brand-blue mt-0.5">1,850</span>
-                <span className="text-[9px] text-[#46A040] font-bold flex items-center mt-1">
-                  <span className="material-symbols-outlined text-[10px] font-extrabold">trending_up</span> +32 last week
-                </span>
-              </div>
-              <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Global Rank</span>
-                <span className="text-lg font-black text-brand-blue mt-0.5">#458</span>
-                <span className="text-[9px] text-[#46A040] font-bold flex items-center mt-1">Top 4.2% global</span>
-              </div>
-              <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Contests</span>
-                <span className="text-lg font-black text-brand-blue mt-0.5">12</span>
-                <span className="text-[9px] text-text-muted font-medium mt-1">Attended events</span>
-              </div>
-              <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Avg. Accuracy</span>
-                <span className="text-lg font-black text-[#46A040] mt-0.5">85%</span>
-                <span className="text-[9px] text-text-muted font-medium mt-1">High submission rate</span>
-              </div>
-            </div>
-
-            <div className="h-px bg-gray-100"></div>
-
-            {/* Milestone Slider */}
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-between items-center text-[10px] font-semibold text-text-muted">
-                <span>Milestone Progress</span>
-                <span className="font-bold text-brand-blue">1,850 / 2,000 to Master</span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                <div className="bg-primary h-full rounded-full" style={{ width: '74%' }}></div>
-              </div>
-            </div>
-
-            <div className="h-px bg-gray-100"></div>
-
-            {/* Unlocked Specialty Badges */}
-            <div className="flex flex-col gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-text-muted font-bold">Combat Trophy Showcase</span>
+          {user ? (
+            /* User Combat Profile Widget */
+            <div className="bg-surface rounded-2xl p-5 border border-gray-100 shadow-md flex flex-col gap-5">
               <div className="flex items-center gap-3">
-                <div className="group/badge relative w-9 h-9 rounded-full bg-amber-50 border border-amber-200 text-amber-500 flex items-center justify-center shadow-sm cursor-pointer hover:scale-105 transition-all">
-                  <span className="material-symbols-outlined text-lg icon-fill">emoji_events</span>
-                  {/* Custom tooltip inside layout */}
-                  <div className="absolute bottom-full mb-2 hidden group-hover/badge:block w-40 bg-brand-blue text-white text-[10px] p-2 rounded-lg text-center shadow-md z-10 left-1/2 -translate-x-1/2 leading-normal">
-                    <strong>Algorithmic Titan</strong><br />Solve all 5 contest problems in under 60 minutes.
-                  </div>
+                <img 
+                  alt="User Avatar" 
+                  className="w-11 h-11 rounded-full border-2 border-primary object-cover" 
+                  onError={handleAvatarError} 
+                  src={userStats?.avatarUrl || user.avatar || "https://ui-avatars.com/api/?name=You&background=12284C&color=fff"} 
+                />
+                <div>
+                  <h4 className="text-sm font-bold text-brand-blue">{userStats?.displayName || user.name}</h4>
                 </div>
-                <div className="group/badge relative w-9 h-9 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-500 flex items-center justify-center shadow-sm cursor-pointer hover:scale-105 transition-all">
-                  <span className="material-symbols-outlined text-lg">local_fire_department</span>
-                  <div className="absolute bottom-full mb-2 hidden group-hover/badge:block w-40 bg-brand-blue text-white text-[10px] p-2 rounded-lg text-center shadow-md z-10 left-1/2 -translate-x-1/2 leading-normal">
-                    <strong>Streak King</strong><br />Participated in 5 consecutive weekly contests.
-                  </div>
+              </div>
+              
+              <div className="h-px bg-gray-100"></div>
+              
+              {/* Battle Stats Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
+                  <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Contest Score</span>
+                  <span className="text-lg font-black text-brand-blue mt-0.5">{userStats?.score?.toLocaleString() || '0'}</span>
+                  <span className="text-[9px] text-[#46A040] font-bold flex items-center mt-1">
+                    <span className="material-symbols-outlined text-[10px] font-extrabold">trending_up</span> Active
+                  </span>
                 </div>
-                <div className="group/badge relative w-9 h-9 rounded-full bg-blue-50 border border-blue-200 text-blue-500 flex items-center justify-center shadow-sm cursor-pointer hover:scale-105 transition-all">
-                  <span className="material-symbols-outlined text-lg icon-fill">security</span>
-                  <div className="absolute bottom-full mb-2 hidden group-hover/badge:block w-40 bg-brand-blue text-white text-[10px] p-2 rounded-lg text-center shadow-md z-10 left-1/2 -translate-x-1/2 leading-normal">
-                    <strong>Bug Buster</strong><br />Achieved 100% test case pass on first code submission.
-                  </div>
+                <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
+                  <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Global Rank</span>
+                  <span className="text-lg font-black text-brand-blue mt-0.5">#{userStats?.rank || 'N/A'}</span>
+                  <span className="text-[9px] text-[#46A040] font-bold flex items-center mt-1">
+                    Top {(((userStats?.rank || 1) / (userStats?.totalUsers || 1)) * 100).toFixed(1)}% global
+                  </span>
+                </div>
+                <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
+                  <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Contests</span>
+                  <span className="text-lg font-black text-brand-blue mt-0.5">{userStats?.contestsCount || 0}</span>
+                  <span className="text-[9px] text-text-muted font-medium mt-1">Attended events</span>
+                </div>
+                <div className="bg-[#f8f9fa] rounded-xl p-3 border border-gray-50 flex flex-col">
+                  <span className="text-[9px] uppercase tracking-wider text-text-muted font-bold">Avg. Accuracy</span>
+                  <span className="text-lg font-black text-[#46A040] mt-0.5">{userStats?.avgAccuracy || 0}%</span>
+                  <span className="text-[9px] text-text-muted font-medium mt-1">Submission rate</span>
                 </div>
               </div>
             </div>
-          </div>
+          ) : (
+            /* Guest Widget */
+            <div className="bg-surface rounded-2xl p-6 border border-gray-100 shadow-md flex flex-col gap-4 text-center items-center">
+              <span className="material-symbols-outlined text-primary text-4xl">account_circle</span>
+              <h4 className="text-sm font-bold text-brand-blue">Combat Profile</h4>
+              <p className="text-xs text-text-muted">Sign in to view your global ranking, scores, and battle statistics.</p>
+              <Link to="/login" className="w-full py-2.5 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md transition-colors text-center">
+                Log In
+              </Link>
+            </div>
+          )}
         </aside>
       </div>
 

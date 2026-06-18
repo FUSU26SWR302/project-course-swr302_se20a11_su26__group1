@@ -1,37 +1,51 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { mockCourses, type Course } from '../services/courseService';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { fetchCourses, type CourseListItemResponse, type CourseSearchRequestParams } from '../services/courseService';
+import { useApp } from '../context/AppContext';
 
 export const Courses: React.FC = () => {
+  const { cart, addToCart, user } = useApp();
+  const navigate = useNavigate();
   // Filter and Sort states
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [priceMin, setPriceMin] = useState(0);
   const [priceMax, setPriceMax] = useState(2000000);
-  const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
-  const [selectedLangs, setSelectedLangs] = useState<string[]>([]);
   const [selectedRatings, setSelectedRatings] = useState<string[]>([]);
+  const [instructorName, setInstructorName] = useState('');
   const [activeSorts, setActiveSorts] = useState<{ field: 'price' | 'rating' | 'enrolled' | 'date'; direction: 'asc' | 'desc' }[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const coursesPerPage = 20;
+  // API Response states
+  const [courses, setCourses] = useState<CourseListItemResponse[]>([]);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string>('');
+
+  const coursesPerPage = 12; // Matches backend page size
 
   // Reset page on search or filter change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedCategory, priceMin, priceMax, selectedLevels, selectedLangs, selectedRatings]);
+  }, [searchTerm, selectedCategory, priceMin, priceMax, selectedRatings, instructorName]);
 
-  // Categories list exactly matching html
+  // Categories list matching actual database seed data
   const categories = [
     { value: 'All', label: 'All Courses' },
-    { value: 'Algorithms', label: 'Algorithms' },
-    { value: 'Core Knowledge', label: 'Core Knowledge' },
-    { value: 'Basic Programming', label: 'Basic Programming' },
-    { value: 'Advanced Programming', label: 'Advanced Programming' },
-    { value: 'Problem Solving', label: 'Problem Solving' },
-    { value: 'Advanced Skills', label: 'Advanced Skills' }
+    { value: 'Web Development', label: 'Web Development' },
+    { value: 'Mobile Development', label: 'Mobile Development' },
+    { value: 'Programming Languages', label: 'Programming Languages' },
+    { value: 'Database & Cloud', label: 'Database & Cloud' }
   ];
+
+  const categoryMap: Record<string, number> = {
+    'Web Development': 1,
+    'Mobile Development': 2,
+    'Programming Languages': 3,
+    'Database & Cloud': 4
+  };
 
   // Default directions for sorting parameters
   const defaultDirections = {
@@ -58,7 +72,7 @@ export const Courses: React.FC = () => {
       const idx = prev.findIndex(s => s.field === field);
       if (idx === -1) {
         // State 1: Inactive -> Active Default
-        return [...prev, { field, direction: defaultDirections[field] }];
+        return [{ field, direction: defaultDirections[field] }]; // Allow single active sort to match standard database queries
       } else {
         const next = [...prev];
         const current = next[idx];
@@ -76,18 +90,6 @@ export const Courses: React.FC = () => {
   };
 
   // Checkbox handlers
-  const handleLevelChange = (level: string) => {
-    setSelectedLevels(prev =>
-      prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]
-    );
-  };
-
-  const handleLangChange = (lang: string) => {
-    setSelectedLangs(prev =>
-      prev.includes(lang) ? prev.filter(l => l !== lang) : [...prev, lang]
-    );
-  };
-
   const handleRatingChange = (rating: string) => {
     setSelectedRatings(prev =>
       prev.includes(rating) ? prev.filter(r => r !== rating) : [...prev, rating]
@@ -116,135 +118,106 @@ export const Courses: React.FC = () => {
   // Filters Reset
   const clearAllFilters = () => {
     setSelectedRatings([]);
-    setSelectedLangs([]);
-    setSelectedLevels([]);
     setPriceMin(0);
     setPriceMax(2000000);
     setActiveSorts([]);
     setSearchTerm('');
+    setInstructorName('');
   };
 
   const selectCategoryTab = (category: string) => {
     setSelectedCategory(category);
   };
 
-  // Calculation of save percentage
-  const getSavePercentage = (course: Course) => {
-    if (course.id === 'c8') return 18;
-    if (course.id === 'c19') return 30;
-    if (course.originalPrice && course.originalPrice > course.price) {
-      const diff = course.originalPrice - course.price;
-      return Math.round((diff / course.originalPrice) * 100);
-    }
-    return 0;
-  };
-
-  // Category tab filter value matches HTML logic
-  const filteredCourses = useMemo(() => {
-    let result = [...mockCourses];
-
-    // 1. Search term match
-    if (searchTerm.trim() !== '') {
-      const searchVal = searchTerm.toLowerCase().trim();
-      result = result.filter(c =>
-        c.title.toLowerCase().includes(searchVal) ||
-        c.author.toLowerCase().includes(searchVal)
-      );
-    }
-
-    // 2. Category match
-    if (selectedCategory !== 'All') {
-      result = result.filter(c => c.category === selectedCategory);
-    }
-
-    // 3. Price range match
-    result = result.filter(c => c.price >= priceMin && c.price <= priceMax);
-
-    // 4. Level match
-    if (selectedLevels.length > 0) {
-      result = result.filter(c => selectedLevels.includes(c.level));
-    }
-
-    // 5. Rating match
-    if (selectedRatings.length > 0) {
-      result = result.filter(c => {
-        const rating = c.rating;
-        return selectedRatings.some(rRange => {
-          if (rRange === '4-5') return rating >= 4.0;
-          if (rRange === '3-4') return rating >= 3.0 && rating < 4.0;
-          if (rRange === '2-3') return rating >= 2.0 && rating < 3.0;
-          if (rRange === '1-2') return rating >= 1.0 && rating < 2.0;
-          if (rRange === '0-1') return rating < 1.0;
-          return false;
-        });
-      });
-    }
-
-    // 6. Language match
-    if (selectedLangs.length > 0) {
-      result = result.filter(c =>
-        c.languages.some(lang => selectedLangs.includes(lang))
-      );
-    }
-
-    // Sorting Engine
-    if (activeSorts.length > 0) {
-      result.sort((a, b) => {
-        for (let sort of activeSorts) {
-          let valA: any, valB: any;
-          const field = sort.field;
-          const dir = sort.direction;
-
-          if (field === 'price') {
-            valA = a.price;
-            valB = b.price;
-          } else if (field === 'rating') {
-            valA = a.rating;
-            valB = b.rating;
-          } else if (field === 'enrolled') {
-            valA = a.enrolled;
-            valB = b.enrolled;
-          } else if (field === 'date') {
-            valA = new Date(a.releaseDate).getTime();
-            valB = new Date(b.releaseDate).getTime();
-          }
-
-          if (valA === valB) continue;
-
-          if (dir === 'asc') {
-            return valA - valB;
-          } else {
-            return valB - valA;
+  // Load courses dynamically from backend API
+  useEffect(() => {
+    const loadCourses = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const categoryIds: number[] = [];
+        if (selectedCategory !== 'All') {
+          const catId = categoryMap[selectedCategory];
+          if (catId) {
+            categoryIds.push(catId);
           }
         }
-        return 0;
-      });
-    } else {
-      // Baseline sorting: newest release date first
-      result.sort((a, b) => {
-        const dateA = new Date(a.releaseDate).getTime();
-        const dateB = new Date(b.releaseDate).getTime();
-        return dateB - dateA;
-      });
-    }
 
-    return result;
-  }, [searchTerm, selectedCategory, priceMin, priceMax, selectedLevels, selectedRatings, selectedLangs, activeSorts]);
+        // Determine rating ranges
+        let minRating: number | undefined = undefined;
+        let maxRating: number | undefined = undefined;
+        if (selectedRatings.length > 0) {
+          const mins = selectedRatings.map(r => {
+            if (r === '4-5') return 4.0;
+            if (r === '3-4') return 3.0;
+            if (r === '2-3') return 2.0;
+            if (r === '1-2') return 1.0;
+            return 0.0;
+          });
+          const maxs = selectedRatings.map(r => {
+            if (r === '4-5') return 5.0;
+            if (r === '3-4') return 4.0;
+            if (r === '2-3') return 3.0;
+            if (r === '1-2') return 2.0;
+            return 1.0;
+          });
+          minRating = Math.min(...mins);
+          maxRating = Math.max(...maxs);
+        }
 
-  // Pagination bounds
-  const totalMatches = filteredCourses.length;
-  const isFiltered = (searchTerm !== '' || selectedCategory !== 'All' || priceMin > 0 || priceMax < 2000000 || selectedRatings.length > 0 || selectedLangs.length > 0 || selectedLevels.length > 0);
-  const totalPages = isFiltered ? Math.ceil(totalMatches / coursesPerPage) : 4;
+        // Determine sorting params
+        const sortBy: string[] = [];
+        const order: string[] = [];
+        const sortByMap: Record<string, string> = {
+          price: 'price',
+          rating: 'averageRating',
+          enrolled: 'totalEnrolled',
+          date: 'createdAt'
+        };
 
-  const visibleCourses = isFiltered
-    ? filteredCourses.slice((currentPage - 1) * coursesPerPage, currentPage * coursesPerPage)
-    : filteredCourses; // Show all 20 template courses on pages 1-4 when unfiltered (matching static templates behavior)
+        if (activeSorts.length > 0) {
+          activeSorts.forEach(s => {
+            const mappedField = sortByMap[s.field];
+            if (mappedField) {
+              sortBy.push(mappedField);
+              order.push(s.direction);
+            }
+          });
+        }
+
+        const params: CourseSearchRequestParams = {
+          keyword: searchTerm,
+          categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
+          minPrice: priceMin,
+          maxPrice: priceMax,
+          minRating,
+          maxRating,
+          instructorName: instructorName,
+          page: currentPage - 1, // backend is 0-based index
+          size: coursesPerPage,
+          sortBy: sortBy.length > 0 ? sortBy : undefined,
+          order: order.length > 0 ? order : undefined
+        };
+
+        const result = await fetchCourses(params);
+        setCourses(result.content || []);
+        setTotalPages(result.totalPages || 1);
+      } catch (err: any) {
+        setError(err.message || 'Đã xảy ra lỗi khi tải danh sách khóa học');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadCourses();
+  }, [searchTerm, selectedCategory, priceMin, priceMax, selectedRatings, instructorName, activeSorts, currentPage]);
+
+  const visibleCourses = courses;
 
   // Total active filters count for badge
   const activeFiltersCount =
     selectedRatings.length +
-    selectedLangs.length +
-    selectedLevels.length +
+    (instructorName.trim() !== '' ? 1 : 0) +
     (priceMin > 0 || priceMax < 2000000 ? 1 : 0);
 
   // Helper styles for price slider
@@ -252,26 +225,51 @@ export const Courses: React.FC = () => {
   const maxPercent = 100 - ((priceMax / 2000000) * 100);
 
   // Helpers for card header styling
-  const getCardBg = (id: string) => {
-    switch (id) {
-      case 'c1': case 'c5': case 'c10': case 'c12': case 'c15': case 'c19':
+  const getCardBg = (id: number) => {
+    switch (id % 4) {
+      case 0:
         return 'bg-brand-blue';
-      case 'c2': case 'c6': case 'c9': case 'c14': case 'c18':
+      case 1:
         return 'bg-brand-blue-light';
-      case 'c3': case 'c7': case 'c11': case 'c16': case 'c20':
+      case 2:
         return 'bg-gray-200';
-      case 'c4': case 'c8': case 'c13': case 'c17':
+      case 3:
         return 'bg-primary-light';
       default:
         return 'bg-brand-blue';
     }
   };
 
-  const getIconColor = (id: string) => {
+  const getIconColor = (id: number) => {
     const bg = getCardBg(id);
     return bg === 'bg-brand-blue' || bg === 'bg-brand-blue-light'
       ? 'text-white'
       : 'text-brand-blue';
+  };
+
+  const getIconName = (categoryName?: string, title?: string) => {
+    const cat = categoryName?.toLowerCase() || '';
+    const t = title?.toLowerCase() || '';
+    
+    if (cat.includes('web') || t.includes('web') || t.includes('html') || t.includes('react') || t.includes('css')) {
+      return 'code';
+    }
+    if (cat.includes('mobile') || t.includes('mobile') || t.includes('flutter') || t.includes('android') || t.includes('ios')) {
+      return 'smartphone';
+    }
+    if (cat.includes('database') || cat.includes('cloud') || t.includes('sql') || t.includes('db') || t.includes('aws') || t.includes('docker') || t.includes('postgres')) {
+      return 'dns';
+    }
+    if (t.includes('java')) {
+      return 'settings_input_component';
+    }
+    if (t.includes('c++') || t.includes('cpp')) {
+      return 'data_object';
+    }
+    if (t.includes('python')) {
+      return 'terminal';
+    }
+    return 'school';
   };
 
   const handlePageChange = (page: number) => {
@@ -284,6 +282,14 @@ export const Courses: React.FC = () => {
 
   return (
     <div className="relative z-10 flex-grow w-full max-w-[1440px] mx-auto px-4 lg:px-8 py-xxl pt-8 text-left">
+      {/* Dynamic Alerts */}
+      {successMessage && (
+        <div className="fixed top-20 right-8 bg-brand-green border border-brand-green/30 text-white p-4 rounded-xl z-50 font-bold flex items-center gap-2 animate-fade-in shadow-xl">
+          <span className="material-symbols-outlined text-[20px] icon-fill">check_circle</span>
+          {successMessage}
+        </div>
+      )}
+
       {/* Page Header */}
       <header className="mb-xl">
         {/* Decorative Badge */}
@@ -423,7 +429,7 @@ export const Courses: React.FC = () => {
           <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-muted text-[20px]">search</span>
           <input
             type="text"
-            placeholder="Search for courses, skills, or authors..."
+            placeholder="Search for courses, keywords, or topics..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm shadow-inner transition-all bg-[#f8f9fa] outline-none"
@@ -433,7 +439,7 @@ export const Courses: React.FC = () => {
         {/* Expanding Collapsible Glassmorphic Filter Drawer */}
         {filtersOpen && (
           <div className="overflow-hidden transition-all duration-300 border-t border-gray-100 mt-4 pt-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 p-6 md:p-8 rounded-2xl bg-gradient-to-b from-[#f8f9fa]/50 to-white/30 border border-white/40 shadow-inner">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 p-6 md:p-8 rounded-2xl bg-gradient-to-b from-[#f8f9fa]/50 to-white/30 border border-white/40 shadow-inner">
               {/* Column 1: Rating Ranges */}
               <div className="flex flex-col gap-3">
                 <h4 className="text-xs md:text-sm font-black text-brand-blue uppercase tracking-wider mb-3 pb-1.5 border-b border-brand-blue/10 flex items-center gap-1.5">
@@ -462,57 +468,27 @@ export const Courses: React.FC = () => {
                 </div>
               </div>
 
-              {/* Column 2: Tech Languages */}
+              {/* Column 2: Instructor Search */}
               <div className="flex flex-col gap-3">
                 <h4 className="text-xs md:text-sm font-black text-brand-blue uppercase tracking-wider mb-3 pb-1.5 border-b border-brand-blue/10 flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-blue-400 text-lg md:text-xl">code</span> Tech / Language
+                  <span className="material-symbols-outlined text-blue-400 text-lg md:text-xl">person</span> Instructor Name
                 </h4>
-                <div className="flex flex-col gap-3">
-                  {[
-                    { value: 'java', label: 'Java Development' },
-                    { value: 'cpp', label: 'C++ Programming' },
-                    { value: 'python', label: 'Python Core' },
-                    { value: 'javascript', label: 'JavaScript / Web' },
-                    { value: 'go', label: 'Go / Cloud' }
-                  ].map(item => (
-                    <label key={item.value} className="flex items-center gap-3 cursor-pointer text-sm md:text-[15px] font-semibold text-text-main hover:text-primary transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={selectedLangs.includes(item.value)}
-                        onChange={() => handleLangChange(item.value)}
-                        className="rounded border-gray-300 text-primary focus:ring-primary w-5 h-5 cursor-pointer"
-                      />
-                      <span>{item.label}</span>
-                    </label>
-                  ))}
+                <div className="relative mt-2">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[18px]">search</span>
+                  <input
+                    type="text"
+                    placeholder="Search by instructor name..."
+                    value={instructorName}
+                    onChange={(e) => setInstructorName(e.target.value)}
+                    className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm shadow-sm transition-all bg-white outline-none"
+                  />
                 </div>
+                <p className="text-xs text-text-muted mt-2 leading-relaxed">
+                  Enter an instructor's name to fetch courses taught exclusively by them.
+                </p>
               </div>
 
-              {/* Column 3: Difficulty Levels */}
-              <div className="flex flex-col gap-3">
-                <h4 className="text-xs md:text-sm font-black text-brand-blue uppercase tracking-wider mb-3 pb-1.5 border-b border-brand-blue/10 flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[#46A040] text-lg md:text-xl">signal_cellular_alt</span> Difficulty Level
-                </h4>
-                <div className="flex flex-col gap-3">
-                  {[
-                    { value: 'beginner', label: 'Beginner' },
-                    { value: 'intermediate', label: 'Intermediate' },
-                    { value: 'advanced', label: 'Advanced' }
-                  ].map(item => (
-                    <label key={item.value} className="flex items-center gap-3 cursor-pointer text-sm md:text-[15px] font-semibold text-text-main hover:text-primary transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={selectedLevels.includes(item.value)}
-                        onChange={() => handleLevelChange(item.value)}
-                        className="rounded border-gray-300 text-primary focus:ring-primary w-5 h-5 cursor-pointer"
-                      />
-                      <span>{item.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Column 4: Price Range Slider */}
+              {/* Column 3: Price Range Slider */}
               <div className="flex flex-col gap-3">
                 <h4 className="text-xs md:text-sm font-black text-brand-blue uppercase tracking-wider mb-3 pb-1.5 border-b border-brand-blue/10 flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-primary text-lg md:text-xl icon-fill">payments</span> Price Range
@@ -604,50 +580,70 @@ export const Courses: React.FC = () => {
       </div>
 
       {/* Course Grid container */}
-      <section id="courses-grid-container" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gutter relative z-10">
-        {visibleCourses.length === 0 ? (
-          <div id="zero-state" className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border border-gray-100 shadow-md col-span-1 sm:col-span-2 lg:col-span-4 fade-in">
+      <section id="courses-grid-container" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-gutter relative z-10 min-h-[400px]">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center text-center p-12 col-span-1 sm:col-span-2 lg:col-span-3 fade-in">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mb-4"></div>
+            <h3 className="text-base font-bold text-brand-blue">Loading Courses...</h3>
+            <p className="text-xs text-text-muted mt-1">Retrieving latest learning modules from the server.</p>
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center text-center p-12 bg-red-50 rounded-2xl border border-red-100 col-span-1 sm:col-span-2 lg:col-span-3 fade-in">
+            <span className="material-symbols-outlined text-red-500 text-5xl mb-2">error</span>
+            <h3 className="text-base font-bold text-red-700">Error Loading Courses</h3>
+            <p className="text-xs text-red-600 max-w-xs mt-1">{error}</p>
+            <button 
+              onClick={() => setCurrentPage(currentPage)}
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        ) : visibleCourses.length === 0 ? (
+          <div id="zero-state" className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border border-gray-100 shadow-md col-span-1 sm:col-span-2 lg:col-span-3 fade-in">
             <span className="material-symbols-outlined text-text-muted text-5xl mb-2">find_in_page</span>
             <h3 className="text-base font-bold text-brand-blue">No Courses Match Your Filters</h3>
-            <p className="text-xs text-text-muted max-w-xs mt-1">Try resetting some filters or modifying your price slider to discover other options.</p>
+            <p className="text-xs text-text-muted max-w-xs mt-1">Try resetting some filters or modifying your search query to discover other options.</p>
           </div>
         ) : (
           visibleCourses.map(course => (
             <Link
               to={`/courses/${course.id}`}
               key={course.id}
-              className="course-card bg-surface rounded-2xl overflow-hidden border border-gray-200 hover:-translate-y-1.5 hover:shadow-xl transition-all duration-300 flex flex-col cursor-pointer group shadow-sm text-left"
+              className="course-card bg-surface rounded-2xl overflow-hidden border border-gray-200 hover:-translate-y-1.5 hover:shadow-xl transition-all duration-300 flex flex-col cursor-pointer group shadow-sm text-left animate-fade-in"
             >
               <div className={`h-[160px] relative overflow-hidden flex items-center justify-center ${getCardBg(course.id)}`}>
                 <img
                   alt={course.title}
-                  className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-500"
+                  className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   src={course.thumbnailUrl}
                 />
-                <span
-                  className={`material-symbols-outlined text-5xl z-10 ${getIconColor(course.id)}`}
-                  style={{ fontVariationSettings: '"FILL" 1' }}
-                >
-                  {course.iconName}
-                </span>
               </div>
               <div className="p-5 flex-1 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <span className="inline-block bg-surface-gray text-text-muted font-bold text-[10px] px-2.5 py-1 rounded-lg border border-gray-200">
-                    {course.category}
+                    {course.categoryName || 'General'}
                   </span>
-                  {renderLevelBadge(course.level)}
+                  {renderLevelBadge(course.price)}
                 </div>
                 <div>
                   <h3 className="font-display font-extrabold text-base text-brand-blue line-clamp-2 leading-snug group-hover:text-primary transition-colors min-h-[44px]">
                     {course.title}
                   </h3>
-                  <p className="text-xs text-text-muted mt-1">{course.author}</p>
+                  <p className="text-xs text-text-muted mt-1">{course.instructorName}</p>
+                  <p className="text-xs text-text-muted line-clamp-2 mt-2 leading-relaxed min-h-[32px]">
+                    {course.shortDescription}
+                  </p>
                 </div>
-                <div className="flex items-center gap-1.5 mt-1">
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   <span className="material-symbols-outlined text-yellow-400 text-[16px] icon-fill">star</span>
-                  <span className="text-xs font-extrabold text-brand-blue">{course.rating}</span>
-                  <span className="text-[10px] text-text-muted">({course.enrolled.toLocaleString('en-US')} ratings)</span>
+                  <span className="text-xs font-extrabold text-brand-blue">{course.averageRating}</span>
+                  <span className="text-[10px] text-text-muted">({course.totalReviews.toLocaleString('en-US')} reviews)</span>
+                  <span className="text-[10px] text-text-muted">•</span>
+                  <span className="inline-flex items-center gap-0.5 text-[10px] text-text-muted">
+                    <span className="material-symbols-outlined text-[12px] opacity-75">group</span>
+                    {course.totalEnrolled.toLocaleString('en-US')} enrolled
+                  </span>
                 </div>
                 {renderCardBottom(course)}
               </div>
@@ -657,7 +653,7 @@ export const Courses: React.FC = () => {
       </section>
 
       {/* Pagination Component */}
-      {totalPages > 1 && (
+      {!loading && !error && totalPages > 1 && (
         <div id="pagination-container" className="flex justify-center items-center gap-2 mt-12 mb-6 select-none animate-fade-in">
           {/* Previous button */}
           {currentPage === 1 ? (
@@ -708,14 +704,14 @@ export const Courses: React.FC = () => {
     </div>
   );
 
-  function renderLevelBadge(level: string) {
-    if (level === 'beginner') {
+  function renderLevelBadge(price: number) {
+    if (price === 0) {
       return (
         <span className="inline-block bg-[#fce2d3] text-primary font-bold text-[10px] px-2.5 py-1 rounded-lg">
           Beginner
         </span>
       );
-    } else if (level === 'intermediate') {
+    } else if (price < 250000) {
       return (
         <span className="inline-block bg-blue-100 text-blue-800 font-bold text-[10px] px-2.5 py-1 rounded-lg">
           Intermediate
@@ -730,32 +726,83 @@ export const Courses: React.FC = () => {
     }
   }
 
-  function renderCardBottom(course: Course) {
-    const hasOriginal = course.originalPrice && course.originalPrice > course.price;
+  function renderCardBottom(course: CourseListItemResponse) {
     const isFree = course.price === 0;
-    const savePct = getSavePercentage(course);
+
+    if (course.enrolled) {
+      const progress = course.progressPercentage || 0;
+      return (
+        <div className="mt-auto pt-3 border-t border-gray-100 flex flex-col gap-3">
+          <div className="w-full flex flex-col gap-1 text-left">
+            <div className="flex justify-between text-[10px] font-bold text-brand-blue">
+              <span>Progress</span>
+              <span>{progress}%</span>
+            </div>
+            <div className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden">
+              <div 
+                className="bg-brand-green h-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
+          </div>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              navigate('/dashboard');
+            }}
+            className="w-full py-2 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-lg transition-colors shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <span>Continue Learning</span>
+            <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+          </button>
+        </div>
+      );
+    }
 
     return (
-      <div className="mt-auto pt-3 border-t border-gray-100 flex items-center justify-between">
-        <div className="flex flex-col text-left">
-          {hasOriginal && (
-            <span className="text-xs text-text-muted line-through font-semibold">
-              {course.originalPrice?.toLocaleString('en-US')}đ
-            </span>
-          )}
+      <div className="mt-auto pt-3 border-t border-gray-100 flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col text-left">
+            {isFree ? (
+              <span className="font-display font-black text-brand-green text-base">Free</span>
+            ) : (
+              <span className="font-display font-black text-primary text-base">
+                {course.price.toLocaleString('en-US')}đ
+              </span>
+            )}
+          </div>
           {isFree ? (
-            <span className="font-display font-black text-brand-green text-base">Free</span>
-          ) : (
-            <span className="font-display font-black text-primary text-base">
-              {course.price.toLocaleString('en-US')}đ
+            <span className="bg-brand-green/10 text-brand-green font-extrabold text-[10px] px-2 py-1 rounded shadow-sm">
+              Get Free
             </span>
+          ) : (
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!user) {
+                  navigate('/login');
+                  return;
+                }
+                addToCart(course.id.toString());
+                setSuccessMessage('Course added to cart successfully!');
+                setTimeout(() => setSuccessMessage(''), 3000);
+              }}
+              disabled={cart.includes(course.id.toString())}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-sm ${
+                cart.includes(course.id.toString())
+                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  : 'bg-primary text-white hover:bg-orange-600 hover:scale-105 hover:shadow-md cursor-pointer'
+              }`}
+              title={cart.includes(course.id.toString()) ? 'In Cart' : 'Add to cart'}
+            >
+              <span className="material-symbols-outlined text-[18px]">
+                {cart.includes(course.id.toString()) ? 'check' : 'add'}
+              </span>
+            </button>
           )}
         </div>
-        {savePct > 0 && (
-          <span className="bg-brand-green text-white font-extrabold text-[10px] px-2 py-1 rounded shadow-sm">
-            Save {savePct}%
-          </span>
-        )}
       </div>
     );
   }

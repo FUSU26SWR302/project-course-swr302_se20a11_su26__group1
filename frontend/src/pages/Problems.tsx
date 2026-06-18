@@ -1,141 +1,37 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-
-interface Problem {
-  id: string;
-  number: number;
-  title: string;
-  difficulty: 'Easy' | 'Medium' | 'Hard';
-  tags: string[];
-  score: number;
-  acceptance: string;
-  totalSolved: string;
-  status: 'solved' | 'unsolved' | 'attempted';
-}
-
-const PROBLEMS_DATA: Problem[] = [
-  {
-    id: 'p1',
-    number: 1,
-    title: 'Two Sum',
-    difficulty: 'Easy',
-    tags: ['Array', 'Hash Table'],
-    score: 10,
-    acceptance: '53.4%',
-    totalSolved: '13,425,123',
-    status: 'solved'
-  },
-  {
-    id: 'p2',
-    number: 2,
-    title: 'Add Two Numbers',
-    difficulty: 'Medium',
-    tags: ['Linked List', 'Math'],
-    score: 20,
-    acceptance: '43.2%',
-    totalSolved: '8,342,912',
-    status: 'unsolved'
-  },
-  {
-    id: 'p3',
-    number: 3,
-    title: 'Longest Substring Without Repeating Characters',
-    difficulty: 'Medium',
-    tags: ['Hash Table', 'Sliding Window'],
-    score: 20,
-    acceptance: '35.1%',
-    totalSolved: '7,812,045',
-    status: 'solved'
-  },
-  {
-    id: 'p4',
-    number: 4,
-    title: 'Median of Two Sorted Arrays',
-    difficulty: 'Hard',
-    tags: ['Array', 'Binary Search'],
-    score: 30,
-    acceptance: '40.5%',
-    totalSolved: '3,542,109',
-    status: 'unsolved'
-  },
-  {
-    id: 'p5',
-    number: 5,
-    title: 'Longest Palindromic Substring',
-    difficulty: 'Medium',
-    tags: ['String', 'Dynamic Programming'],
-    score: 20,
-    acceptance: '34.2%',
-    totalSolved: '4,912,773',
-    status: 'attempted'
-  },
-  {
-    id: 'p6',
-    number: 6,
-    title: 'Zigzag Conversion',
-    difficulty: 'Medium',
-    tags: ['String'],
-    score: 20,
-    acceptance: '48.9%',
-    totalSolved: '1,213,445',
-    status: 'solved'
-  },
-  {
-    id: 'p7',
-    number: 7,
-    title: 'Reverse Integer',
-    difficulty: 'Medium',
-    tags: ['Math'],
-    score: 20,
-    acceptance: '28.4%',
-    totalSolved: '6,342,110',
-    status: 'unsolved'
-  },
-  {
-    id: 'p8',
-    number: 8,
-    title: 'String to Integer (atoi)',
-    difficulty: 'Medium',
-    tags: ['String'],
-    score: 20,
-    acceptance: '17.2%',
-    totalSolved: '4,551,932',
-    status: 'unsolved'
-  },
-  {
-    id: 'p9',
-    number: 9,
-    title: 'Palindrome Number',
-    difficulty: 'Easy',
-    tags: ['Math'],
-    score: 10,
-    acceptance: '55.8%',
-    totalSolved: '5,112,342',
-    status: 'solved'
-  },
-  {
-    id: 'p10',
-    number: 10,
-    title: 'Regular Expression Matching',
-    difficulty: 'Hard',
-    tags: ['String', 'Dynamic Programming'],
-    score: 30,
-    acceptance: '28.0%',
-    totalSolved: '1,029,485',
-    status: 'unsolved'
-  }
-];
+import { problemService } from '../services/problemService';
+import type { ProblemListItem } from '../services/problemService';
 
 export const Problems: React.FC = () => {
   const navigate = useNavigate();
 
   // State controls for filtering and searching
+  const [problems, setProblems] = useState<ProblemListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [difficultyFilter, setDifficultyFilter] = useState('all');
   const [topicFilter, setTopicFilter] = useState('all');
   const [sortBy, setSortBy] = useState('recent');
   const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    problemService.fetchProblems()
+      .then(data => {
+        setProblems(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  const solvedCount = useMemo(() => problems.filter(p => p.isSolved).length, [problems]);
+  const totalCount = problems.length;
 
   // Toggle helper for popular tags
   const toggleTopic = (topic: string) => {
@@ -164,7 +60,7 @@ export const Problems: React.FC = () => {
 
   // Dynamically filtered and sorted problem set
   const filteredAndSortedProblems = useMemo(() => {
-    let result = [...PROBLEMS_DATA];
+    let result = [...problems];
 
     // Search query
     if (searchQuery.trim() !== '') {
@@ -178,7 +74,11 @@ export const Problems: React.FC = () => {
 
     // Status filter
     if (statusFilter !== 'all') {
-      result = result.filter(p => p.status === statusFilter);
+      if (statusFilter === 'solved') {
+        result = result.filter(p => p.isSolved);
+      } else if (statusFilter === 'unsolved') {
+        result = result.filter(p => !p.isSolved);
+      }
     }
 
     // Difficulty filter
@@ -196,23 +96,61 @@ export const Problems: React.FC = () => {
     // Sort order
     if (sortBy === 'success_desc') {
       result.sort((a, b) => {
-        const rateA = parseFloat(a.acceptance);
-        const rateB = parseFloat(b.acceptance);
+        const rateA = a.totalSubmission > 0 ? (a.totalAccepted / a.totalSubmission) : 0;
+        const rateB = b.totalSubmission > 0 ? (b.totalAccepted / b.totalSubmission) : 0;
         return rateB - rateA;
       });
     } else if (sortBy === 'submissions_desc') {
       result.sort((a, b) => {
-        const countA = parseInt(a.totalSolved.replace(/,/g, ''), 10);
-        const countB = parseInt(b.totalSolved.replace(/,/g, ''), 10);
-        return countB - countA;
+        return b.totalSubmission - a.totalSubmission;
       });
     } else {
       // 'recent' -> default by ID/number ascending
-      result.sort((a, b) => a.number - b.number);
+      result.sort((a, b) => a.id - b.id);
     }
 
     return result;
-  }, [searchQuery, statusFilter, difficultyFilter, topicFilter, sortBy]);
+  }, [problems, searchQuery, statusFilter, difficultyFilter, topicFilter, sortBy]);
+
+  const itemsPerPage = 10;
+  const totalPages = Math.max(1, Math.ceil(filteredAndSortedProblems.length / itemsPerPage));
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [filteredAndSortedProblems.length, totalPages, currentPage]);
+
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedProblems = useMemo(() => {
+    return filteredAndSortedProblems.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredAndSortedProblems, startIndex]);
+
+  if (loading) {
+    return (
+      <div className="relative z-10 flex-grow w-full max-w-[1440px] mx-auto px-4 lg:px-8 py-xxl pt-8 text-center">
+        <div className="flex flex-col items-center justify-center min-h-[400px]">
+          <svg className="animate-spin h-10 w-10 text-primary mb-4" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="text-text-muted font-semibold">Loading practice arena...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="relative z-10 flex-grow w-full max-w-[1440px] mx-auto px-4 lg:px-8 py-xxl pt-8 text-center">
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-red-600">
+          <span className="material-symbols-outlined text-[48px] mb-2">error</span>
+          <span className="font-bold mb-2">Error Loading Problems</span>
+          <span className="text-sm text-text-muted">{error}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative z-10 flex-grow w-full max-w-[1440px] mx-auto px-4 lg:px-8 py-xxl pt-8 text-left">
@@ -234,15 +172,11 @@ export const Problems: React.FC = () => {
         <div className="flex items-center gap-2 bg-surface p-4 rounded-xl shadow-sm border border-outline-variant/50 relative z-10">
           <div className="flex flex-col items-center px-4 border-r border-outline-variant/30">
             <span className="text-caption font-bold text-text-muted uppercase">Solved</span>
-            <span className="text-headline-md font-bold text-brand-green">145</span>
-          </div>
-          <div className="flex flex-col items-center px-4 border-r border-outline-variant/30">
-            <span className="text-caption font-bold text-text-muted uppercase">Attempted</span>
-            <span className="text-headline-md font-bold text-primary">23</span>
+            <span className="text-headline-md font-bold text-brand-green">{solvedCount}</span>
           </div>
           <div className="flex flex-col items-center px-4">
             <span className="text-caption font-bold text-text-muted uppercase">Total</span>
-            <span className="text-headline-md font-bold text-text-main">1248</span>
+            <span className="text-headline-md font-bold text-text-main">{totalCount}</span>
           </div>
         </div>
       </header>
@@ -285,7 +219,6 @@ export const Problems: React.FC = () => {
               <option value="all">Status: All</option>
               <option value="solved">Solved</option>
               <option value="unsolved">Unsolved</option>
-              <option value="attempted">Attempted</option>
             </select>
 
             <select
@@ -383,7 +316,7 @@ export const Problems: React.FC = () => {
             >
               <option value="recent">Sort: Newest</option>
               <option value="success_desc">Success Rate</option>
-              <option value="submissions_desc">Total Solved</option>
+              <option value="submissions_desc">Total Submissions</option>
             </select>
           </div>
         </div>
@@ -400,11 +333,11 @@ export const Problems: React.FC = () => {
                 <th className="p-4 font-semibold w-32">Difficulty</th>
                 <th className="p-4 font-semibold w-24 text-right">Score</th>
                 <th className="p-4 font-semibold w-32 text-right">Acceptance</th>
-                <th className="p-4 font-semibold w-40 text-right pr-6">Total</th>
+                <th className="p-4 font-semibold w-40 text-right pr-6">Submissions</th>
               </tr>
             </thead>
             <tbody className="text-body-md font-body-md text-text-main divide-y divide-outline-variant/30">
-              {filteredAndSortedProblems.map((prob) => (
+              {paginatedProblems.map((prob) => (
                 <tr
                   key={prob.id}
                   onClick={() => navigate(`/problems/${prob.id}`)}
@@ -417,7 +350,7 @@ export const Problems: React.FC = () => {
                       </span>
                     )}
                     {prob.status === 'attempted' && (
-                      <span className="material-symbols-outlined text-[20px] text-red-600" title="Wrong Answer">
+                      <span className="material-symbols-outlined text-[20px] text-red-500">
                         cancel
                       </span>
                     )}
@@ -428,7 +361,7 @@ export const Problems: React.FC = () => {
                       onClick={(e) => e.stopPropagation()}
                       className="font-bold text-text-main group-hover:text-primary transition-colors"
                     >
-                      {prob.number}. {prob.title}
+                      {prob.title}
                     </Link>
                     <div className="text-xs text-text-muted mt-1 flex gap-2">
                       {prob.tags.map((tag) => (
@@ -447,8 +380,8 @@ export const Problems: React.FC = () => {
                     {prob.difficulty === 'Hard' && <span className="text-red-600 font-medium">Hard</span>}
                   </td>
                   <td className="p-4 text-right font-mono text-sm">{prob.score}</td>
-                  <td className="p-4 text-right">{prob.acceptance}</td>
-                  <td className="p-4 text-right pr-6 font-mono text-sm">{prob.totalSolved}</td>
+                  <td className="p-4 text-right">{prob.totalSubmission > 0 ? (prob.totalAccepted * 100 / prob.totalSubmission).toFixed(1) + '%' : '0.0%'}</td>
+                  <td className="p-4 text-right pr-6 font-mono text-sm">{prob.totalSubmission}</td>
                 </tr>
               ))}
               {filteredAndSortedProblems.length === 0 && (
@@ -466,54 +399,55 @@ export const Problems: React.FC = () => {
         <div className="p-6 border-t border-outline-variant/50 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4 text-sm text-text-muted">
             <span>
-              Showing {filteredAndSortedProblems.length > 0 ? 1 : 0} to{' '}
-              {filteredAndSortedProblems.length} of {filteredAndSortedProblems.length} problems
+              Showing {filteredAndSortedProblems.length > 0 ? startIndex + 1 : 0} to{' '}
+              {Math.min(startIndex + itemsPerPage, filteredAndSortedProblems.length)} of {filteredAndSortedProblems.length} problems
             </span>
-            <select className="border border-outline-variant/50 rounded bg-surface-gray px-2 py-1 text-xs focus:outline-none focus:border-primary cursor-pointer">
-              <option>10 / page</option>
-              <option>20 / page</option>
-              <option>50 / page</option>
-            </select>
+            <span className="text-xs font-semibold text-text-muted bg-surface-gray border border-outline-variant/50 rounded px-2.5 py-1">
+              10 / page
+            </span>
           </div>
-          <div className="flex gap-1">
-            <button
-              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1}
-              className="w-8 h-8 rounded border border-outline-variant/50 flex items-center justify-center text-text-muted hover:bg-surface-gray disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-[18px]">chevron_left</span>
-            </button>
-            {[1, 2, 3, 4, 5].map((pageNum) => (
+          
+          {totalPages > 1 && (
+            <div className="flex gap-1 items-center">
               <button
-                key={pageNum}
-                onClick={() => setCurrentPage(pageNum)}
-                className={`w-8 h-8 rounded flex items-center justify-center text-sm ${
-                  currentPage === pageNum
-                    ? 'bg-primary text-white font-bold'
-                    : 'border border-outline-variant/50 text-text-muted hover:bg-surface-gray hover:text-primary transition-colors text-sm font-medium'
-                }`}
+                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="w-8 h-8 rounded border border-outline-variant/50 flex items-center justify-center text-text-muted hover:bg-surface-gray disabled:opacity-50"
               >
-                {pageNum}
+                <span className="material-symbols-outlined text-[18px]">chevron_left</span>
               </button>
-            ))}
-            <span className="w-8 h-8 flex items-center justify-center text-text-muted">...</span>
-            <button
-              onClick={() => setCurrentPage(125)}
-              className={`w-8 h-8 rounded flex items-center justify-center text-sm ${
-                currentPage === 125
-                  ? 'bg-primary text-white font-bold'
-                  : 'border border-outline-variant/50 text-text-muted hover:bg-surface-gray hover:text-primary transition-colors text-sm font-medium'
-              }`}
-            >
-              125
-            </button>
-            <button
-              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, 125))}
-              className="w-8 h-8 rounded border border-outline-variant/50 flex items-center justify-center text-text-muted hover:bg-surface-gray transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]">chevron_right</span>
-            </button>
-          </div>
+              
+              {/* Dynamic Page Buttons */}
+              {Array.from({ length: totalPages }, (_, idx) => idx + 1)
+                .filter(page => page === 1 || page === totalPages || Math.abs(page - currentPage) <= 2)
+                .map((pageNum, idx, arr) => {
+                  const showDots = idx > 0 && pageNum - arr[idx - 1] > 1;
+                  return (
+                    <React.Fragment key={pageNum}>
+                      {showDots && <span className="w-8 h-8 flex items-center justify-center text-text-muted">...</span>}
+                      <button
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`w-8 h-8 rounded flex items-center justify-center text-sm ${
+                          currentPage === pageNum
+                            ? 'bg-primary text-white font-bold'
+                            : 'border border-outline-variant/50 text-text-muted hover:bg-surface-gray hover:text-primary transition-colors text-sm font-medium'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+
+              <button
+                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="w-8 h-8 rounded border border-outline-variant/50 flex items-center justify-center text-text-muted hover:bg-surface-gray disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

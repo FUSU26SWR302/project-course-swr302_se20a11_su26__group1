@@ -1,13 +1,20 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { authService } from '../services/authService';
+import { fetchCart, addToCartApi, removeFromCartApi, clearCartApi } from '../services/cartService';
+import { checkoutApi } from '../services/orderService';
+import { paymentService } from '../services/paymentService';
 
 export interface User {
   id: string;
   name: string;
   username: string;
   email: string;
-  role: 'student' | 'instructor';
+  role: 'student' | 'instructor' | 'admin';
   avatar: string;
   walletBalance: number;
+  status?: 'ACTIVE' | 'LOCKED';
+  lockReason?: string;
+  lockAppeal?: string;
 }
 
 export interface WalletTransaction {
@@ -48,13 +55,16 @@ interface AppContextType {
   enrolledCourses: string[]; // Course IDs
   submissions: CodeSubmission[];
   registeredContests: string[]; // Contest IDs
-  login: (username: string, role: 'student' | 'instructor') => void;
-  logout: () => void;
+  login: (username: string, password: string) => Promise<User>;
+  googleLogin: (idToken: string) => Promise<User>;
+  register: (registerData: any) => Promise<User>;
+  logout: () => Promise<void>;
   depositFunds: (amount: number, method: string) => void;
   withdrawFunds: (amount: number, bank: string, account: string) => boolean;
   addToCart: (courseId: string) => void;
   removeFromCart: (courseId: string) => void;
-  checkoutCart: (totalPrice: number, courseItems: { id: string; title: string; price: number }[]) => boolean;
+  clearCart: () => void;
+  checkoutCart: (totalPrice: number, courseItems: { id: string; title: string; price: number }[]) => Promise<boolean>;
   submitCodeSolution: (
     problemId: string,
     problemTitle: string,
@@ -63,20 +73,23 @@ interface AppContextType {
     contestId?: string
   ) => Promise<CodeSubmission>;
   registerForContest: (contestId: string) => void;
+  refreshBalance: () => Promise<void>;
+  updateUser: (updatedFields: Partial<User>) => void;
+  refreshAuth: () => Promise<User>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Pre-load a default user
-  const [user, setUser] = useState<User | null>({
-    id: 'u1',
-    name: 'Nguyễn Văn Hùng',
-    username: 'hungnv',
-    email: 'hungnv@fpt.edu.vn',
-    role: 'student',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuB98dPVylZwO6vg95FQaD4k-myG1YhY-VGq7du1S8-pcxrZmnhUwx2VzSs1AkC17Ld9sN1YJQziGrBM5Wxg39W1UFKWDjBJkC4p7QnbHP8aEqlD703-2MHTrqIN65tt0QPlOkZY7JTwMAXIas3lEuSOkuv9JT3HAenrdph26Gza-yDSVOVR0WEfHbnhWYtKN5fNK-bLnyjvw5pHNbtgeUVJysTqy7Xeb6TBV9G1g22LmO1UX_2MQ-DV5vRbsXPHEqko_NPdoIjv-Is',
-    walletBalance: 2500000,
+  // Persist user state from localStorage
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('user_info');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [cart, setCart] = useState<string[]>(() => {
+    const savedCart = localStorage.getItem('guest_cart');
+    return savedCart ? JSON.parse(savedCart) : [];
   });
 
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([
@@ -88,7 +101,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     { id: 'PAY-2001', courseTitle: 'Cấu trúc dữ liệu và Giải thuật với Java', amount: 499000, status: 'Success', date: '2026-05-21 10:00' },
   ]);
 
-  const [cart, setCart] = useState<string[]>(['c2']); // Start with course 'c2' in cart
   const [enrolledCourses, setEnrolledCourses] = useState<string[]>(['c1']); // Starts enrolled in 'c1'
   const [submissions, setSubmissions] = useState<CodeSubmission[]>([
     {
@@ -105,22 +117,126 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ]);
   const [registeredContests, setRegisteredContests] = useState<string[]>([]);
 
-  const login = (username: string, role: 'student' | 'instructor') => {
-    setUser({
-      id: role === 'instructor' ? 'inst-1' : 'u1',
-      name: role === 'instructor' ? 'Dr. Lê Minh Tuấn' : username || 'Nguyễn Văn Hùng',
-      username: username || 'hungnv',
-      email: role === 'instructor' ? 'tuanlm@fpt.edu.vn' : `${username || 'hungnv'}@fpt.edu.vn`,
-      role: role,
-      avatar: role === 'instructor' 
-        ? 'https://ui-avatars.com/api/?name=Le+Tuan&background=F36F21&color=fff'
-        : 'https://lh3.googleusercontent.com/aida-public/AB6AXuB98dPVylZwO6vg95FQaD4k-myG1YhY-VGq7du1S8-pcxrZmnhUwx2VzSs1AkC17Ld9sN1YJQziGrBM5Wxg39W1UFKWDjBJkC4p7QnbHP8aEqlD703-2MHTrqIN65tt0QPlOkZY7JTwMAXIas3lEuSOkuv9JT3HAenrdph26Gza-yDSVOVR0WEfHbnhWYtKN5fNK-bLnyjvw5pHNbtgeUVJysTqy7Xeb6TBV9G1g22LmO1UX_2MQ-DV5vRbsXPHEqko_NPdoIjv-Is',
-      walletBalance: role === 'instructor' ? 15800000 : 2500000,
-    });
+  // Fetch cart from backend when user logs in or app loads
+  useEffect(() => {
+    if (user) {
+      fetchCart().then(async ids => {
+        // Hợp nhất giỏ hàng khách với DB
+        const guestCartStr = localStorage.getItem('guest_cart');
+        const guestCart: string[] = guestCartStr ? JSON.parse(guestCartStr) : [];
+
+        let mergedCart = [...new Set([...ids.map(id => id.toString()), ...guestCart])];
+
+        // Push guest items to backend
+        for (const cId of guestCart) {
+          if (!ids.includes(Number(cId))) {
+            await addToCartApi(cId).catch(console.error);
+          }
+        }
+
+        localStorage.removeItem('guest_cart'); // Clear after merge
+        setCart(mergedCart);
+      }).catch(err => {
+        console.error("Lỗi khi fetch giỏ hàng từ DB:", err);
+      });
+    } else {
+      // Khi logout, giữ nguyên giỏ hàng DB cuối cùng hoặc xóa?
+      // Thường thì nên tải lại từ guest_cart
+      const savedCart = localStorage.getItem('guest_cart');
+      setCart(savedCart ? JSON.parse(savedCart) : []);
+    }
+  }, [user?.id]);
+
+  const login = async (username: string, password: string): Promise<User> => {
+    const result = await authService.login(username, password);
+    let userRole: 'student' | 'instructor' | 'admin' = 'student';
+    if (result.roles?.includes('ADMIN')) {
+      userRole = 'admin';
+    } else if (result.roles?.includes('INSTRUCTOR')) {
+      userRole = 'instructor';
+    }
+
+    const loggedInUser: User = {
+      id: result.id.toString(),
+      name: result.displayName || username,
+      username: result.username || username,
+      email: result.email || '',
+      role: userRole,
+      avatar: result.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(result.displayName || username)}&background=F36F21&color=fff`,
+      walletBalance: result.balance !== undefined ? Number(result.balance) : 0,
+      status: result.status as 'ACTIVE' | 'LOCKED' || 'ACTIVE',
+      lockReason: result.lockReason || '',
+      lockAppeal: result.lockAppeal || '',
+    };
+
+    setUser(loggedInUser);
+    localStorage.setItem('user_info', JSON.stringify(loggedInUser));
+    return loggedInUser;
   };
 
-  const logout = () => {
-    setUser(null);
+  const googleLogin = async (idToken: string): Promise<User> => {
+    const result = await authService.googleLogin(idToken);
+    let userRole: 'student' | 'instructor' | 'admin' = 'student';
+    if (result.roles?.includes('ADMIN')) {
+      userRole = 'admin';
+    } else if (result.roles?.includes('INSTRUCTOR')) {
+      userRole = 'instructor';
+    }
+
+    const loggedInUser: User = {
+      id: result.id.toString(),
+      name: result.displayName || 'Google User',
+      username: result.username || 'google_user',
+      email: result.email || '',
+      role: userRole,
+      avatar: result.avatarUrl || `https://ui-avatars.com/api/?name=User&background=F36F21&color=fff`,
+      walletBalance: result.balance !== undefined ? Number(result.balance) : 0,
+      status: result.status as 'ACTIVE' | 'LOCKED' || 'ACTIVE',
+      lockReason: result.lockReason || '',
+      lockAppeal: result.lockAppeal || '',
+    };
+
+    setUser(loggedInUser);
+    localStorage.setItem('user_info', JSON.stringify(loggedInUser));
+    return loggedInUser;
+  };
+
+  const register = async (registerData: any): Promise<User> => {
+    const result = await authService.register(registerData);
+    let userRole: 'student' | 'instructor' | 'admin' = 'student';
+    if (result.roles?.includes('ADMIN')) {
+      userRole = 'admin';
+    } else if (result.roles?.includes('INSTRUCTOR')) {
+      userRole = 'instructor';
+    }
+
+    const loggedInUser: User = {
+      id: result.id.toString(),
+      name: result.displayName || registerData.displayname,
+      username: result.username || registerData.username,
+      email: result.email || registerData.email,
+      role: userRole,
+      avatar: result.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(result.displayName || registerData.displayname)}&background=F36F21&color=fff`,
+      walletBalance: result.balance !== undefined ? Number(result.balance) : 0,
+      status: result.status as 'ACTIVE' | 'LOCKED' || 'ACTIVE',
+      lockReason: result.lockReason || '',
+      lockAppeal: result.lockAppeal || '',
+    };
+
+    setUser(loggedInUser);
+    localStorage.setItem('user_info', JSON.stringify(loggedInUser));
+    return loggedInUser;
+  };
+
+  const logout = async (): Promise<void> => {
+    try {
+      await authService.logout();
+    } catch (e) {
+      console.error('Logout API failed, forcing local logout:', e);
+    } finally {
+      setUser(null);
+      localStorage.removeItem('user_info');
+    }
   };
 
   const depositFunds = (amount: number, method: string) => {
@@ -152,25 +268,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const addToCart = (courseId: string) => {
+  const addToCart = async (courseId: string) => {
     if (!cart.includes(courseId)) {
-      setCart(prev => [...prev, courseId]);
+      const newCart = [...cart, courseId];
+      setCart(newCart);
+
+      if (user) {
+        try {
+          const success = await addToCartApi(courseId);
+          if (!success) {
+            console.error("Backend API returned false for addToCart");
+            alert("Có lỗi xảy ra khi lưu giỏ hàng vào Database. Vui lòng kiểm tra backend!");
+          }
+        } catch (error) {
+          console.error("Error calling addToCartApi", error);
+          alert("Lỗi kết nối Backend: Không thể gọi API lưu giỏ hàng. Chắc chắn bạn đã restart backend chưa?");
+        }
+      } else {
+        // Lưu tạm vào localStorage cho khách chưa đăng nhập
+        localStorage.setItem('guest_cart', JSON.stringify(newCart));
+      }
     }
   };
 
   const removeFromCart = (courseId: string) => {
     setCart(prev => prev.filter(id => id !== courseId));
+    if (user) {
+      removeFromCartApi(courseId).catch(console.error);
+    }
   };
 
-  const checkoutCart = (totalPrice: number, courseItems: { id: string; title: string; price: number }[]): boolean => {
+  const clearCart = () => {
+    setCart([]);
+    if (user) {
+      clearCartApi().catch(console.error);
+    } else {
+      localStorage.removeItem('guest_cart');
+    }
+  };
+
+  const checkoutCart = async (totalPrice: number, courseItems: { id: string; title: string; price: number }[]): Promise<boolean> => {
     if (!user || user.walletBalance < totalPrice) return false;
 
+    const courseIds = courseItems.map(c => Number(c.id));
+    const success = await checkoutApi(courseIds);
+    if (!success) return false;
+
     // Deduct money
-    setUser(prev => prev ? { ...prev, walletBalance: prev.walletBalance - totalPrice } : null);
+    await refreshBalance();
 
     // Enroll in all checkout courses
-    const courseIds = courseItems.map(c => c.id);
-    setEnrolledCourses(prev => [...new Set([...prev, ...courseIds])]);
+    const courseIdStrs = courseItems.map(c => c.id);
+    setEnrolledCourses(prev => [...new Set([...prev, ...courseIdStrs])]);
 
     // Create payment transaction records
     const newPayments = courseItems.map(item => ({
@@ -182,7 +331,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
 
     setPaymentTransactions(prev => [...newPayments, ...prev]);
-    setCart([]); // Clear cart
+    setCart([]); // Clear cart locally
+    if (user) {
+      clearCartApi().catch(console.error); // Clear cart in backend
+    }
     return true;
   };
 
@@ -251,6 +403,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const refreshBalance = async () => {
+    if (!user) return;
+    try {
+      const currentBalance = await paymentService.getBalance();
+      setUser(prev => {
+        if (!prev) return prev;
+        const updatedUser = { ...prev, walletBalance: currentBalance };
+        localStorage.setItem('user_info', JSON.stringify(updatedUser));
+        return updatedUser;
+      });
+    } catch (error) {
+      console.error("Failed to refresh balance", error);
+    }
+  };
+
+  const updateUser = (updatedFields: Partial<User>) => {
+    setUser(prev => {
+      if (!prev) return null;
+      const newU = { ...prev, ...updatedFields };
+      localStorage.setItem('user_info', JSON.stringify(newU));
+      return newU;
+    });
+  };
+
+  const refreshAuth = async (): Promise<User> => {
+    const result = await authService.refresh();
+    let userRole: 'student' | 'instructor' | 'admin' = 'student';
+    if (result.roles?.includes('ADMIN')) {
+      userRole = 'admin';
+    } else if (result.roles?.includes('INSTRUCTOR')) {
+      userRole = 'instructor';
+    }
+
+    const loggedInUser: User = {
+      id: result.id.toString(),
+      name: result.displayName || result.username || '',
+      username: result.username || '',
+      email: result.email || '',
+      role: userRole,
+      avatar: result.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(result.displayName || result.username || '')}&background=F36F21&color=fff`,
+      walletBalance: result.balance !== undefined ? Number(result.balance) : 0,
+      status: result.status as 'ACTIVE' | 'LOCKED' || 'ACTIVE',
+      lockReason: result.lockReason || '',
+      lockAppeal: result.lockAppeal || '',
+    };
+
+    setUser(loggedInUser);
+    localStorage.setItem('user_info', JSON.stringify(loggedInUser));
+    return loggedInUser;
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -262,14 +465,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         submissions,
         registeredContests,
         login,
+        googleLogin,
+        register,
         logout,
         depositFunds,
         withdrawFunds,
         addToCart,
         removeFromCart,
+        clearCart,
         checkoutCart,
         submitCodeSolution,
         registerForContest,
+        refreshBalance,
+        updateUser,
+        refreshAuth,
       }}
     >
       {children}

@@ -31,6 +31,10 @@
   0% { left: -100%; }
   100% { left: 100%; }
 }
+@keyframes fade-in {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
 
 .animate-float-slow {
   animation: float-slow 6s ease-in-out infinite;
@@ -43,6 +47,9 @@
 }
 .animate-pulse-glow-green {
   animation: pulse-glow-green 3s infinite;
+}
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out both;
 }
 
 .shine-effect {
@@ -69,7 +76,7 @@
 }
 
 .font-display {
-  font-family: 'Outfit', sans-serif;
+  font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
 /* Login/Register page styles - from login.html (Lumina Learning theme) */
