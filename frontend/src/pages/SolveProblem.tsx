@@ -23,6 +23,7 @@ export const SolveProblem: React.FC = () => {
 
   const [testcasesLogs, setTestcasesLogs] = useState<any[]>([]);
   const [overallResult, setOverallResult] = useState<any>(null);
+  const [maintenanceError, setMaintenanceError] = useState<boolean>(false);
   const [expandedTestcases, setExpandedTestcases] = useState<{[key: number]: boolean}>({});
   const [copiedInput, setCopiedInput] = useState<boolean>(false);
   const [copiedOutput, setCopiedOutput] = useState<boolean>(false);
@@ -406,7 +407,12 @@ export const SolveProblem: React.FC = () => {
       })
       .catch(err => {
         setIsSubmitting(false);
-        alert(err.message || 'Submission failed');
+        const errMsg = err.message || 'Submission failed';
+        if (errMsg.includes('404') || errMsg.includes('Not Found') || errMsg.includes('Lỗi hệ thống') || errMsg.toLowerCase().includes('judge0') || errMsg.toLowerCase().includes('ngrok')) {
+          setMaintenanceError(true);
+        } else {
+          alert(errMsg);
+        }
       });
   };
 
@@ -1051,6 +1057,33 @@ export const SolveProblem: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Maintenance Modal */}
+      {maintenanceError && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[99] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl animate-fade-in border border-slate-200 text-center relative">
+            <button 
+              onClick={() => setMaintenanceError(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors bg-transparent border-none cursor-pointer"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+            <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+              <span className="material-symbols-outlined text-3xl">build</span>
+            </div>
+            <h3 className="text-xl font-display font-bold text-slate-800 mb-2">System Under Maintenance</h3>
+            <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+              The online judge system is currently under maintenance or temporarily unavailable. Please try submitting your code again in a few minutes. We apologize for the inconvenience!
+            </p>
+            <button
+              onClick={() => setMaintenanceError(false)}
+              className="w-full bg-primary hover:bg-primary-hover text-white font-bold py-2.5 rounded-lg transition-colors border-none cursor-pointer"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

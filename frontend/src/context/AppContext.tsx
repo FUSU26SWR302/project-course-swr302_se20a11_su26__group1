@@ -119,7 +119,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Fetch cart from backend when user logs in or app loads
   useEffect(() => {
-    if (user) {
+    if (user && user.role !== 'admin') {
       fetchCart().then(async ids => {
         // Hợp nhất giỏ hàng khách với DB
         const guestCartStr = localStorage.getItem('guest_cart');
@@ -139,13 +139,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }).catch(err => {
         console.error("Lỗi khi fetch giỏ hàng từ DB:", err);
       });
-    } else {
+    } else if (!user) {
       // Khi logout, giữ nguyên giỏ hàng DB cuối cùng hoặc xóa?
       // Thường thì nên tải lại từ guest_cart
       const savedCart = localStorage.getItem('guest_cart');
       setCart(savedCart ? JSON.parse(savedCart) : []);
     }
-  }, [user?.id]);
+  }, [user?.id, user?.role]);
 
   const login = async (username: string, password: string): Promise<User> => {
     const result = await authService.login(username, password);

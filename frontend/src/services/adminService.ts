@@ -109,6 +109,16 @@ export interface OrderDetails {
   date: string;
 }
 
+export interface PayoutDetails {
+  id: string;
+  instructorName: string;
+  instructorEmail: string;
+  amount: number;
+  bankAccount: string;
+  status: 'COMPLETED' | 'PENDING' | 'FAILED';
+  date: string;
+}
+
 export interface AwardDetails {
   id: string;
   userName: string;
@@ -153,7 +163,7 @@ export interface AdminCourse {
   thumbnailUrl: string;
   shortDescription: string;
   longDescription: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING_AI' | 'PENDING_ADMIN' | 'APPROVED' | 'REJECTED';
   price: number;
   averageRating: number;
   totalReviews: number;
@@ -210,6 +220,17 @@ export interface AdminUser {
   isOnline?: boolean;
   lockReason?: string;
   lockAppeal?: string;
+}
+
+export interface PageResponse<T> {
+  page: number;
+  size: number;
+  numberOfElements: number;
+  totalElements: number;
+  totalPages: number;
+  first: boolean;
+  last: boolean;
+  content: T[];
 }
 
 export interface AdminProblem {
@@ -308,7 +329,7 @@ export interface AdminDepositHistory {
 
 let mockCourses: AdminCourse[] = [
   {
-    id: "c-101",
+    id: "101",
     instructorId: 10,
     instructorName: "Dr. Jenkins",
     instructorAvatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
@@ -327,7 +348,7 @@ let mockCourses: AdminCourse[] = [
     totalChapters: 6,
   },
   {
-    id: "c-102",
+    id: "102",
     instructorId: 11,
     instructorName: "Alice Miller",
     instructorAvatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80",
@@ -346,7 +367,7 @@ let mockCourses: AdminCourse[] = [
     totalChapters: 4,
   },
   {
-    id: "c-103",
+    id: "103",
     instructorId: 10,
     instructorName: "Dr. Jenkins",
     instructorAvatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
@@ -354,7 +375,7 @@ let mockCourses: AdminCourse[] = [
     thumbnailUrl: "https://images.unsplash.com/photo-1527474305487-b87b222841cc?auto=format&fit=crop&w=400&q=80",
     shortDescription: "Analyze datasets, build neural networks, and visualize data trends.",
     longDescription: "Learn Python libraries including NumPy, Pandas, Scikit-Learn, and TensorFlow. Perfect for beginners entering the AI audit and science sectors.",
-    status: 'PENDING',
+    status: 'PENDING_ADMIN',
     price: 599000,
     averageRating: 0.0,
     totalReviews: 0,
@@ -365,7 +386,7 @@ let mockCourses: AdminCourse[] = [
     totalChapters: 5,
   },
   {
-    id: "c-104",
+    id: "104",
     instructorId: 12,
     instructorName: "John Doe",
     instructorAvatarUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80",
@@ -373,7 +394,7 @@ let mockCourses: AdminCourse[] = [
     thumbnailUrl: "https://images.unsplash.com/photo-1607799279861-4dd421887fb3?auto=format&fit=crop&w=400&q=80",
     shortDescription: "Build blazing fast microservices with Golang, gRPC and RabbitMQ.",
     longDescription: "Learn to design production systems with distributed messaging, microservice gateways, and orchestration using Docker-compose.",
-    status: 'PENDING',
+    status: 'PENDING_ADMIN',
     price: 650000,
     averageRating: 0.0,
     totalReviews: 0,
@@ -422,8 +443,8 @@ let mockUsers: AdminUser[] = [
     totalDeposited: 5000000,
     totalPurchased: 3500000,
     purchasedCourses: [
-      { id: "c-101", title: "Mastering Full-Stack React & Node.js", price: 499000, date: "2026-02-01T12:00:00Z" },
-      { id: "c-102", title: "Java Algorithms & Coding Arena", price: 389000, date: "2026-03-10T14:20:00Z" }
+      { id: "101", title: "Mastering Full-Stack React & Node.js", price: 499000, date: "2026-02-01T12:00:00Z" },
+      { id: "102", title: "Java Algorithms & Coding Arena", price: 389000, date: "2026-03-10T14:20:00Z" }
     ],
     isOnline: true
   },
@@ -437,7 +458,7 @@ let mockUsers: AdminUser[] = [
     totalDeposited: 1200000,
     totalPurchased: 1000000,
     purchasedCourses: [
-      { id: "c-101", title: "Mastering Full-Stack React & Node.js", price: 499000, date: "2026-02-25T09:00:00Z" }
+      { id: "101", title: "Mastering Full-Stack React & Node.js", price: 499000, date: "2026-02-25T09:00:00Z" }
     ],
     isOnline: false
   },
@@ -769,7 +790,6 @@ export const adminService = {
         rating: 5.0,
         studentsCount: 0
       });
-
     }
     // Add log
     mockActivityLogs.unshift({
@@ -976,6 +996,43 @@ export const adminService = {
     return data.result;
   },
 
+  async getContestSubmissions(contestId: number): Promise<any[]> {
+    const response = await fetchWithAutoRefresh(`${BASE_URL}/contests/${contestId}/submissions`, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch contest submissions');
+    }
+    const data = await response.json();
+    return data.result || [];
+  },
+
+  async getContestScoreboard(contestId: number): Promise<any> {
+    const response = await fetchWithAutoRefresh(`${BASE_URL}/api/v1/contests/${contestId}/scoreboard`, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch contest scoreboard');
+    }
+    const data = await response.json();
+    return data.result;
+  },
+
+  async getCourseModerationReport(courseId: number | string): Promise<any> {
+    const response = await fetchWithAutoRefresh(`${BASE_URL}/api/moderation/report/${courseId}`, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch AI moderation report');
+    }
+    return response.json();
+  },
+
+  async triggerAiModeration(courseId: number | string): Promise<any> {
+    const response = await fetchWithAutoRefresh(`${BASE_URL}/api/moderation/test/${courseId}`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+    if (!response.ok) {
+      throw new Error('Failed to trigger AI moderation');
+    }
+    return response.json();
+  },
+
   // Contests
   async getContests(): Promise<AdminContest[]> {
     try {
@@ -1180,6 +1237,54 @@ export const adminService = {
     const response = await fetch(`${BASE_URL}/admin/financial/details`, { credentials: 'include' });
     if (!response.ok) {
       throw new Error('Failed to fetch financial audit details');
+    }
+    const data = await response.json();
+    return data.result;
+  },
+
+  async getFinancialOrders(page: number, limit: number, startDate?: string, endDate?: string): Promise<PageResponse<OrderDetails>> {
+    let url = `${BASE_URL}/admin/financial/orders?page=${page}&limit=${limit}`;
+    if (startDate) url += `&startDate=${startDate}`;
+    if (endDate) url += `&endDate=${endDate}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch financial orders');
+    }
+    const data = await response.json();
+    return data.result;
+  },
+
+  async getFinancialAwards(page: number, limit: number, startDate?: string, endDate?: string): Promise<PageResponse<AwardDetails>> {
+    let url = `${BASE_URL}/admin/financial/awards?page=${page}&limit=${limit}`;
+    if (startDate) url += `&startDate=${startDate}`;
+    if (endDate) url += `&endDate=${endDate}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch financial awards');
+    }
+    const data = await response.json();
+    return data.result;
+  },
+
+  async getFinancialSales(page: number, limit: number, startDate?: string, endDate?: string): Promise<PageResponse<SaleDetails>> {
+    let url = `${BASE_URL}/admin/financial/sales?page=${page}&limit=${limit}`;
+    if (startDate) url += `&startDate=${startDate}`;
+    if (endDate) url += `&endDate=${endDate}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch financial sales');
+    }
+    const data = await response.json();
+    return data.result;
+  },
+
+  async getFinancialPayouts(page: number = 1, size: number = 10, startDate?: string, endDate?: string): Promise<PageResponse<PayoutDetails>> {
+    let url = `${BASE_URL}/admin/financial/payouts?page=${page}&limit=${size}`;
+    if (startDate) url += `&startDate=${startDate}`;
+    if (endDate) url += `&endDate=${endDate}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch financial payouts');
     }
     const data = await response.json();
     return data.result;

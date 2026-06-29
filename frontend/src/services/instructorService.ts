@@ -14,7 +14,7 @@ export interface InstructorCourse {
   studentsCount: number;
   rating: number;
   reviewsCount: number;
-  status: 'published' | 'review' | 'draft';
+  status: 'published' | 'review' | 'draft' | 'rejected';
   icon: string;
   gradient: string;
   description: string;
@@ -100,6 +100,16 @@ export interface CreateCoursePayload {
   thumbnailUrl?: string;
 }
 
+function mapBackendStatusToFrontend(status: string): 'published' | 'review' | 'draft' | 'rejected' {
+  if (!status) return 'draft';
+  const s = status.toUpperCase();
+  if (s === 'APPROVED' || s === 'PUBLISHED') return 'published';
+  if (s === 'PENDING' || s === 'REVIEW') return 'review';
+  if (s === 'REJECTED') return 'rejected';
+  if (s === 'DRAFTS' || s === 'DRAFT') return 'draft';
+  return 'draft';
+}
+
 export const instructorService = {
   async uploadMedia(file: File, folderName: string = 'courses'): Promise<string> {
     const formData = new FormData();
@@ -136,7 +146,10 @@ export const instructorService = {
     }
 
     const data = await response.json();
-    return data.result;
+    return (data.result || []).map((c: any) => ({
+      ...c,
+      status: mapBackendStatusToFrontend(c.status)
+    }));
   },
 
   async getCategories(): Promise<Category[]> {
@@ -182,7 +195,10 @@ export const instructorService = {
     }
 
     const data = await response.json();
-    return data.result;
+    return {
+      ...data.result,
+      status: mapBackendStatusToFrontend(data.result.status)
+    };
   },
 
   async getCourseDetail(courseId: string): Promise<any> {
@@ -199,6 +215,9 @@ export const instructorService = {
     }
 
     const data = await response.json();
+    if (data.result && data.result.status) {
+      data.result.status = mapBackendStatusToFrontend(data.result.status);
+    }
     return data.result;
   },
 
@@ -258,7 +277,10 @@ export const instructorService = {
     }
 
     const data = await response.json();
-    return data.result;
+    return {
+      ...data.result,
+      status: mapBackendStatusToFrontend(data.result.status)
+    };
   },
 
 
@@ -446,5 +468,19 @@ export const instructorService = {
 
     const data = await response.json();
     return data.result;
+  },
+
+  async getCourseModerationReport(courseId: string | number): Promise<any> {
+    const response = await fetch(`${BASE_URL}/api/moderation/report/${courseId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch course moderation report');
+    }
+    return response.json();
   }
 };

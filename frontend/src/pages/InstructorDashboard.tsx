@@ -259,6 +259,37 @@ export const InstructorDashboard: React.FC = () => {
   const [isCreateCourseOpen, setIsCreateCourseOpen] = useState(false);
   const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
 
+  // AI Moderation Report
+  const [isAiReportModalOpen, setIsAiReportModalOpen] = useState(false);
+  const [reviewModerationReport, setReviewModerationReport] = useState<any | null>(null);
+  const [loadingModerationReport, setLoadingModerationReport] = useState(false);
+
+  const parsedAiReport = useMemo(() => {
+    if (!reviewModerationReport || !reviewModerationReport.reportJson) return null;
+    try {
+      return typeof reviewModerationReport.reportJson === 'string' 
+        ? JSON.parse(reviewModerationReport.reportJson) 
+        : reviewModerationReport.reportJson;
+    } catch (e) {
+      return null;
+    }
+  }, [reviewModerationReport]);
+
+  const handleOpenAiReport = async (courseId: string | number) => {
+    setIsAiReportModalOpen(true);
+    setLoadingModerationReport(true);
+    setReviewModerationReport(null);
+    try {
+      const data = await instructorService.getCourseModerationReport(courseId);
+      setReviewModerationReport(data);
+    } catch (err) {
+      console.warn("Failed to load moderation report:", err);
+    } finally {
+      setLoadingModerationReport(false);
+    }
+  };
+
+
   // Active course syllabus details for the WORKSPACE PANEL
   const [workspaceCourseTitle, setWorkspaceCourseTitle] = useState('Data Structures & Algorithms');
   const [curriculumData, setCurriculumData] = useState<CourseSyllabus>({ chapters: [] });
@@ -1096,9 +1127,17 @@ export const InstructorDashboard: React.FC = () => {
   const [trendTimeframe, setTrendTimeframe] = useState<'1m' | '3m' | '9m' | '12m'>('12m');
 
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
+  const [courseSubTab, setCourseSubTab] = useState<'published' | 'review' | 'draft' | 'rejected'>('published');
+
+  // Tab-specific loading states
+  const [loadingCourses, setLoadingCourses] = useState(false);
+  const [loadingGeneralRevenue, setLoadingGeneralRevenue] = useState(false);
+  const [loadingFilteredRevenue, setLoadingFilteredRevenue] = useState(false);
+  const [loadingTrendData, setLoadingTrendData] = useState(false);
 
   useEffect(() => {
     const fetchInstructorCourses = async () => {
+      setLoadingCourses(true);
       try {
         const coursesData = await instructorService.getCourses();
         if (coursesData && coursesData.length > 0) {
@@ -1110,6 +1149,8 @@ export const InstructorDashboard: React.FC = () => {
       } catch (error) {
         console.error('Failed to fetch instructor courses:', error);
         setInstructorCourses([]);
+      } finally {
+        setLoadingCourses(false);
       }
     };
 
@@ -1122,14 +1163,15 @@ export const InstructorDashboard: React.FC = () => {
       }
     };
 
-    if (user) {
+    if (user && (activeTab === 'dashboard' || activeTab === 'my-courses' || activeTab === 'edit-course')) {
       fetchInstructorCourses();
       fetchCategories();
     }
-  }, [user]);
+  }, [user, activeTab, courseSubTab]);
 
   useEffect(() => {
     const fetchGeneralRevenueData = async () => {
+      setLoadingGeneralRevenue(true);
       try {
         const [recentRegs, payoutLogs, chartData, lifetimeSummary] = await Promise.all([
           instructorService.getRecentRegistrations(),
@@ -1143,16 +1185,19 @@ export const InstructorDashboard: React.FC = () => {
         setLifetimeGrossRevenue(lifetimeSummary?.totalGrossRevenue || 0);
       } catch (err) {
         console.error("Failed to load general revenue data:", err);
+      } finally {
+        setLoadingGeneralRevenue(false);
       }
     };
 
-    if (user) {
+    if (user && (activeTab === 'dashboard' || activeTab === 'revenue')) {
       fetchGeneralRevenueData();
     }
-  }, [user]);
+  }, [user, activeTab]);
 
   useEffect(() => {
     const fetchFilteredRevenueData = async () => {
+      setLoadingFilteredRevenue(true);
       try {
         const [summary, sales, breakdown] = await Promise.all([
           instructorService.getRevenueSummary(revenueFilter, appliedStartDate, appliedEndDate),
@@ -1167,16 +1212,19 @@ export const InstructorDashboard: React.FC = () => {
         setBreakdownPage(1);
       } catch (err) {
         console.error("Failed to load filtered revenue data:", err);
+      } finally {
+        setLoadingFilteredRevenue(false);
       }
     };
 
-    if (user) {
+    if (user && activeTab === 'revenue') {
       fetchFilteredRevenueData();
     }
-  }, [user, revenueFilter, appliedStartDate, appliedEndDate]);
+  }, [user, activeTab, revenueFilter, appliedStartDate, appliedEndDate]);
 
   useEffect(() => {
     const fetchTrendData = async () => {
+      setLoadingTrendData(true);
       try {
         const trendRes = await instructorService.getCourseRegistrations(trendTimeframe);
         setCourseRegistrationsState(trendRes?.courseRegistrations || []);
@@ -1184,26 +1232,31 @@ export const InstructorDashboard: React.FC = () => {
         setCourseRegPage(1);
       } catch (err) {
         console.error("Failed to load trend data:", err);
+      } finally {
+        setLoadingTrendData(false);
       }
     };
 
-    if (user) {
+    if (user && activeTab === 'revenue') {
       fetchTrendData();
     }
-  }, [user, trendTimeframe]);
+  }, [user, activeTab, trendTimeframe]);
 
 
-  const [courseSubTab, setCourseSubTab] = useState<'all' | 'published' | 'review' | 'draft'>('all');
+
+  // Derive stats
+  const totalCourses = instructorCourses.length;
+  const activeCourses = instructorCourses.filter(c => c.status === 'published').length;
+  const totalStudents = instructorCourses.reduce((acc, curr) => acc + curr.studentsCount, 0);
+
   const [courseSearchTerm, setCourseSearchTerm] = useState('');
   const [courseSortFilter, setCourseSortFilter] = useState<'newest' | 'price-low' | 'price-high'>('newest');
 
   const filteredAndSortedCourses = useMemo(() => {
     let result = [...instructorCourses];
 
-    // 1. Filter by sub-tab status
-    if (courseSubTab !== 'all') {
-      result = result.filter(c => c.status === courseSubTab);
-    }
+    // Status filter
+    result = result.filter(c => c.status === courseSubTab);
 
     // 2. Filter by search query
     if (courseSearchTerm.trim() !== '') {
@@ -1794,6 +1847,14 @@ export const InstructorDashboard: React.FC = () => {
   const [selectedFailedPayout, setSelectedFailedPayout] = useState<PayoutHistoryItem | null>(null);
   const [isAllPayoutsModalOpen, setIsAllPayoutsModalOpen] = useState<boolean>(false);
   const [enrollmentPage, setEnrollmentPage] = useState<number>(1);
+  const [payoutPage, setPayoutPage] = useState<number>(1);
+
+  const PAYOUTS_PER_PAGE = 3;
+  const totalPayoutPages = Math.ceil(payoutHistory.length / PAYOUTS_PER_PAGE);
+  const displayedPayoutHistory = payoutHistory.slice(
+    (payoutPage - 1) * PAYOUTS_PER_PAGE,
+    payoutPage * PAYOUTS_PER_PAGE
+  );
 
   const displayedTakeHome = totalActualTakeHome;
   const earningsBreakdown = courseBreakdown;
@@ -2109,7 +2170,7 @@ export const InstructorDashboard: React.FC = () => {
             className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs md:text-sm font-semibold transition-all duration-200 justify-center md:justify-start shadow-md shadow-primary/20"
           >
             <span className="material-symbols-outlined text-[20px] shrink-0">swap_horiz</span>
-            <span className="sidebar-footer-text whitespace-nowrap">Student View</span>
+            <span className="sidebar-footer-text whitespace-nowrap">Customer View</span>
           </Link>
 
           {/* Instructor User Identity */}
@@ -2155,8 +2216,14 @@ export const InstructorDashboard: React.FC = () => {
                   {/* ================= TAB: DASHBOARD ================= */}
             {activeTab === 'dashboard' && (
               <div id="tab-dashboard" className="tab-content flex flex-col gap-8">
-                
-                {/* Header Banner */}
+                {loadingCourses || loadingGeneralRevenue ? (
+                  <div className="flex flex-col items-center justify-center py-32 gap-4 bg-white rounded-3xl border border-slate-200/50 shadow-sm w-full">
+                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent"></div>
+                    <p className="text-slate-500 font-semibold text-sm animate-pulse">Loading dashboard analytics...</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Header Banner */}
                 <div className="relative overflow-hidden bg-gradient-to-r from-brand-blue to-[#1c3d73] rounded-3xl p-6 md:p-8 text-white shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                   {/* Decorative glowing gradient blur elements */}
                   <div className="absolute top-0 right-0 w-80 h-80 bg-primary/20 rounded-full blur-[100px] pointer-events-none"></div>
@@ -2175,12 +2242,7 @@ export const InstructorDashboard: React.FC = () => {
 
                   {/* Quick Action Buttons */}
                   <div className="relative z-10 flex flex-wrap gap-2.5 shrink-0 w-full md:w-auto">
-                    <button
-                      onClick={() => setIsCreateCourseOpen(true)}
-                      className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl text-xs font-bold transition-all duration-200 shadow-md shadow-primary/20 hover:scale-[1.02]"
-                    >
-                      <span className="material-symbols-outlined text-sm font-bold">add</span> Create Course
-                    </button>
+
                     <a
                       href="#my-courses"
                       className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-white/10 hover:bg-white/15 text-white rounded-xl text-xs font-bold transition-all duration-200 border border-white/10 hover:scale-[1.02]"
@@ -2723,7 +2785,7 @@ export const InstructorDashboard: React.FC = () => {
                         topPerformingCourses.map((c) => (
                           <div 
                             key={c.id} 
-                            onClick={() => openSyllabusEditor(c)}
+                            onClick={() => handleOpenStatistics(c)}
                             className="group flex flex-col sm:flex-row items-center gap-4 p-3.5 rounded-2xl border border-slate-100 hover:border-primary/20 hover:bg-[#fff9f6]/30 transition-all duration-300 cursor-pointer"
                           >
                             {/* Left course mini-banner */}
@@ -2766,7 +2828,7 @@ export const InstructorDashboard: React.FC = () => {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setSelectedCourseForStats(c);
+                                  handleOpenStatistics(c);
                                 }}
                                 className="w-8 h-8 rounded-full border border-slate-200 hover:border-primary/45 hover:bg-[#fff9f6] text-slate-400 hover:text-primary transition-all flex items-center justify-center cursor-pointer bg-transparent outline-none mt-1"
                                 title="View Course Statistics"
@@ -2975,7 +3037,8 @@ export const InstructorDashboard: React.FC = () => {
                   </div>
 
                 </div>
-
+                  </>
+                )}
               </div>
             )}
 
@@ -3005,21 +3068,6 @@ export const InstructorDashboard: React.FC = () => {
 
                 {/* Sub-tabs for Course Categories */}
                 <div className="flex flex-wrap items-center gap-2 border-b border-slate-200/40 pb-4">
-                  <button
-                    onClick={() => setCourseSubTab('all')}
-                    className={`flex items-center gap-2 px-4 py-2.5 text-xs md:text-sm font-bold rounded-xl transition-all select-none border border-slate-200/60 shadow-sm ${
-                      courseSubTab === 'all'
-                        ? 'bg-primary text-white border-primary shadow-md shadow-primary/10'
-                        : 'bg-white hover:bg-slate-50 text-slate-600'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">menu</span>
-                    <span>All Courses</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold ${
-                      courseSubTab === 'all' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-                    }`}>{instructorCourses.length}</span>
-                  </button>
-
                   <button
                     onClick={() => setCourseSubTab('published')}
                     className={`flex items-center gap-2 px-4 py-2.5 text-xs md:text-sm font-bold rounded-xl transition-all select-none border border-slate-200/60 shadow-sm ${
@@ -3064,6 +3112,21 @@ export const InstructorDashboard: React.FC = () => {
                       courseSubTab === 'draft' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
                     }`}>{instructorCourses.filter(c => c.status === 'draft').length}</span>
                   </button>
+
+                  <button
+                    onClick={() => setCourseSubTab('rejected')}
+                    className={`flex items-center gap-2 px-4 py-2.5 text-xs md:text-sm font-bold rounded-xl transition-all select-none border border-slate-200/60 shadow-sm ${
+                      courseSubTab === 'rejected'
+                        ? 'bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/10'
+                        : 'bg-white hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[18px] icon-fill">cancel</span>
+                    <span>Rejected</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold ${
+                      courseSubTab === 'rejected' ? 'bg-white/20 text-white' : 'bg-rose-50 text-rose-600'
+                    }`}>{instructorCourses.filter(c => c.status === 'rejected').length}</span>
+                  </button>
                 </div>
 
                 {/* Filter & Search Row */}
@@ -3087,10 +3150,10 @@ export const InstructorDashboard: React.FC = () => {
                       onChange={(e) => setCourseSubTab(e.target.value as any)}
                       className="border-slate-200/60 rounded-xl text-xs font-semibold text-text-main py-2 focus:ring-primary focus:ring-1 focus:border-primary cursor-pointer bg-white"
                     >
-                      <option value="all">All States</option>
                       <option value="published">Active (Published)</option>
                       <option value="review">Pending</option>
                       <option value="draft">Draft (Creating)</option>
+                      <option value="rejected">Rejected</option>
                     </select>
                     <select
                       value={courseSortFilter}
@@ -3105,7 +3168,13 @@ export const InstructorDashboard: React.FC = () => {
                 </div>
 
                 {/* Courses Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="courses-container">
+                {loadingCourses ? (
+                  <div className="flex flex-col items-center justify-center py-32 gap-4 bg-white rounded-3xl border border-slate-200/50 shadow-sm w-full">
+                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent"></div>
+                    <p className="text-slate-500 font-semibold text-sm animate-pulse">Loading your courses...</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="courses-container">
                   {filteredAndSortedCourses.length === 0 ? (
                     <div className="col-span-full py-12 text-center bg-surface border border-dashed border-slate-200 rounded-2xl">
                       <span className="material-symbols-outlined text-slate-400 text-5xl mb-3">inbox</span>
@@ -3166,6 +3235,12 @@ export const InstructorDashboard: React.FC = () => {
                                   Draft
                                 </span>
                               )}
+                              {course.status === 'rejected' && (
+                                <span className="px-2.5 py-0.5 text-xs rounded-full bg-rose-100 text-rose-700 font-bold flex items-center gap-1 select-none">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                  Rejected
+                                </span>
+                              )}
                               <span className="text-sm font-bold text-primary">{course.price}</span>
                             </div>
                             <p className="text-xs text-text-muted line-clamp-2">{course.description}</p>
@@ -3216,6 +3291,42 @@ export const InstructorDashboard: React.FC = () => {
                             </button>
                           )}
 
+                          {course.status === 'rejected' && (
+                            <>
+                              <button
+                                onClick={() => handleOpenAiReport(course.id)}
+                                className="col-span-2 flex items-center justify-center gap-1 px-3 py-2 text-xs rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold transition-all border border-rose-200"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">gpp_bad</span> View Rejection Reason
+                              </button>
+                              <button
+                                onClick={() => openSyllabusEditor(course)}
+                                className="flex items-center justify-center gap-1 px-3 py-2 text-xs rounded-xl bg-slate-100 hover:bg-slate-200 text-brand-blue font-bold transition-all border border-slate-200/30"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">edit</span> Fix Issues
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await instructorService.submitCourseForReview(course.id);
+                                    setInstructorCourses((prev) =>
+                                      prev.map((c) =>
+                                        c.id === course.id ? { ...c, status: 'review' } : c
+                                      )
+                                    );
+                                    showToast(`Submitted successfully! Course "${course.title}" has been sent for admin review.`, 'success');
+                                  } catch (error) {
+                                    console.error('Failed to submit course', error);
+                                    showToast('Failed to submit course for review. Please try again.', 'error');
+                                  }
+                                }}
+                                className="flex items-center justify-center gap-1 px-3 py-2 text-xs rounded-xl bg-primary hover:bg-primary-hover text-white font-bold transition-all shadow-sm"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">publish</span> Submit for Review
+                              </button>
+                            </>
+                          )}
+
                           {course.status === 'draft' && (
                             <>
                               <button
@@ -3250,8 +3361,7 @@ export const InstructorDashboard: React.FC = () => {
                     ))
                   )}
                 </div>
-
-
+                )}
               </div>
             )}
 
@@ -3260,8 +3370,14 @@ export const InstructorDashboard: React.FC = () => {
             {/* ================= TAB: REVENUE ================= */}
             {activeTab === 'revenue' && (
               <div id="tab-revenue" className="tab-content flex flex-col gap-8 animate-fade-in pb-12">
-                
-                {/* Header Section */}
+                {loadingGeneralRevenue || loadingFilteredRevenue || loadingTrendData ? (
+                  <div className="flex flex-col items-center justify-center py-32 gap-4 bg-white rounded-3xl border border-slate-200/50 shadow-sm w-full">
+                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent"></div>
+                    <p className="text-slate-500 font-semibold text-sm animate-pulse">Loading revenue analytics...</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Header Section */}
                 <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
                   <div>
                     <div className="inline-flex items-center gap-1.5 bg-[#fce2d3] border border-primary/20 px-3 py-1 rounded-full text-primary font-bold text-xs uppercase tracking-wider mb-2.5 shadow-sm">
@@ -3973,6 +4089,9 @@ export const InstructorDashboard: React.FC = () => {
                     <div>
                       <h3 className="font-display font-black text-sm text-brand-blue uppercase tracking-wider">Monthly Payout History Log</h3>
                       <p className="text-xs text-text-muted mt-0.5">Automated monthly payout logs processed and credited to your registered bank account.</p>
+                      <div className="mt-2 inline-block px-3 py-1 rounded-xl bg-slate-50 border border-slate-200 text-brand-blue font-bold text-xs">
+                        Showing {displayedPayoutHistory.length} of {payoutHistory.length} transactions
+                      </div>
                     </div>
                     {/* Quick System Payout Badge */}
                     <div className="bg-[#e8f0fe] border border-blue-200 px-3.5 py-2.5 rounded-2xl flex items-center gap-2.5 shrink-0 shadow-sm">
@@ -3997,7 +4116,7 @@ export const InstructorDashboard: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
-                        {payoutHistory.slice(0, 3).map((item) => (
+                        {displayedPayoutHistory.map((item) => (
                           <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-3.5 px-4 font-bold text-brand-blue">{item.payoutPeriod}</td>
                             <td className="py-3.5 px-4 text-right text-slate-900 font-bold">
@@ -4036,16 +4155,39 @@ export const InstructorDashboard: React.FC = () => {
                     </table>
                   </div>
 
-                  {/* View All Payouts Button */}
-                  {payoutHistory.length > 3 && (
-                    <div className="flex justify-center mt-5 pt-3 border-t border-slate-100">
+                  {/* Pagination Controls */}
+                  {totalPayoutPages > 1 && (
+                    <div className="flex items-center justify-between mt-5 pt-3 border-t border-slate-100">
                       <button
                         type="button"
-                        onClick={() => setIsAllPayoutsModalOpen(true)}
-                        className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 text-brand-blue font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                        onClick={() => setPayoutPage(prev => Math.max(prev - 1, 1))}
+                        disabled={payoutPage === 1}
+                        className={`w-8 h-8 flex items-center justify-center rounded-xl transition-all ${
+                          payoutPage === 1
+                            ? 'bg-slate-50 text-slate-350 border border-slate-100 cursor-not-allowed'
+                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-brand-blue active:scale-90 shadow-sm'
+                        }`}
+                        title="Previous page"
                       >
-                        <span className="material-symbols-outlined text-base">history</span>
-                        View All Automatic Payouts
+                        <span className="material-symbols-outlined text-[16px] font-bold">chevron_left</span>
+                      </button>
+
+                      <span className="text-[10px] font-extrabold text-slate-500 select-none">
+                        {payoutPage} / {totalPayoutPages}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => setPayoutPage(prev => Math.min(prev + 1, totalPayoutPages))}
+                        disabled={payoutPage === totalPayoutPages}
+                        className={`w-8 h-8 flex items-center justify-center rounded-xl transition-all ${
+                          payoutPage === totalPayoutPages
+                            ? 'bg-slate-50 text-slate-350 border border-slate-100 cursor-not-allowed'
+                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-brand-blue active:scale-90 shadow-sm'
+                        }`}
+                        title="Next page"
+                      >
+                        <span className="material-symbols-outlined text-[16px] font-bold">chevron_right</span>
                       </button>
                     </div>
                   )}
@@ -4182,6 +4324,8 @@ export const InstructorDashboard: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                )}
+                  </>
                 )}
               </div>
             )}
@@ -4919,14 +5063,14 @@ export const InstructorDashboard: React.FC = () => {
                              <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>lock</span>
                            </div>
                            <div className="flex flex-col mt-0.5">
-                             <h4 className="text-sm font-black text-brand-blue tracking-tight">Lesson Locked (Pending Review)</h4>
-                             <p className="text-xs text-slate-600 font-medium mt-1 leading-relaxed">This lesson is currently inactive and waiting for admin approval. You can view the contents but cannot make edits.</p>
+                             <h4 className="text-sm font-black text-brand-blue tracking-tight">Lesson Rejected / Inactive</h4>
+                             <p className="text-xs text-slate-600 font-medium mt-1 leading-relaxed">This lesson has been rejected by AI or is inactive. You can update the content and click "Save" to trigger AI re-check.</p>
                            </div>
                         </div>
                       </div>
                     )}
                     
-                    <div className={instructorCourses.find(c => c.id === workspaceCourseId)?.status === 'published' && selectedItem.type === 'lesson' && activeLesson?.status === 'INACTIVE' ? 'pointer-events-none opacity-80 grayscale-[10%] select-none' : ''}>
+                    <div>
                       {/* TAB 1: Overview */}
                       {editorTab === 'overview' && (
                         <div className="flex flex-col gap-5">
@@ -6531,6 +6675,141 @@ export const InstructorDashboard: React.FC = () => {
               <button type="button" onClick={() => setIsQuizModalOpen(false)} className="px-6 py-2.5 rounded-xl border border-slate-200 text-slate-700 text-sm font-bold hover:bg-slate-100 transition-colors">Cancel</button>
               <button type="button" onClick={handleSaveQuiz} className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-extrabold shadow-md shadow-amber-500/20 transition-transform active:scale-95">
                 Save Quiz
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: View AI Audit Report */}
+      {isAiReportModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in"
+            onClick={() => setIsAiReportModalOpen(false)}
+          ></div>
+          
+          <div className="bg-surface w-full max-w-4xl max-h-[85vh] rounded-3xl shadow-2xl relative z-[101] animate-scale-in flex flex-col overflow-hidden border border-slate-200/50">
+            {/* Modal Header */}
+            <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-white">
+              <div>
+                <h3 className="text-xl font-display font-black text-rose-700 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-rose-600 text-2xl">gpp_bad</span> 
+                  AI Rejection Report
+                </h3>
+                <p className="text-xs text-text-muted mt-1 font-medium">Detailed reasons why your course was not approved.</p>
+              </div>
+              <button 
+                onClick={() => setIsAiReportModalOpen(false)}
+                className="w-10 h-10 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-8 overflow-y-auto bg-slate-50 flex-1">
+              {loadingModerationReport ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-3 text-text-muted">
+                  <div className="w-8 h-8 border-4 border-slate-200 border-t-rose-600 rounded-full animate-spin"></div>
+                  <p className="text-sm font-bold">Loading report data...</p>
+                </div>
+              ) : !parsedAiReport ? (
+                <div className="text-center py-16 text-text-muted italic bg-white border border-gray-200 rounded-2xl flex flex-col items-center gap-4">
+                  <span className="material-symbols-outlined text-[48px] text-gray-300">report_off</span>
+                  <div>
+                    <p className="font-bold text-base text-slate-700">No Moderation Report Found</p>
+                    <p className="text-xs mt-1 max-w-sm">The report for this course could not be retrieved.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Status Banner */}
+                  <div className={`p-5 rounded-2xl border flex items-start gap-4 ${
+                    parsedAiReport.isClean 
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}>
+                    <span className="material-symbols-outlined text-3xl mt-0.5">
+                      {parsedAiReport.isClean ? 'verified_user' : 'gpp_bad'}
+                    </span>
+                    <div>
+                      <h4 className="font-black text-lg">
+                        {parsedAiReport.isClean ? 'Status: Approved' : 'Status: Needs Revision'}
+                      </h4>
+                      <p className="text-sm font-medium mt-1 opacity-90">
+                        {parsedAiReport.isClean 
+                          ? 'This course meets all quality standards.' 
+                          : 'Please fix the violations below and re-submit your course for review.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Course Level Violations */}
+                  {parsedAiReport.courseViolations && parsedAiReport.courseViolations.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="bg-slate-100 px-5 py-3 border-b border-slate-200">
+                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-rose-500">warning</span>
+                          General Course Violations
+                        </h4>
+                      </div>
+                      <ul className="divide-y divide-slate-100">
+                        {parsedAiReport.courseViolations.map((v: string, idx: number) => (
+                          <li key={idx} className="p-4 px-5 text-sm font-medium text-slate-700 flex items-start gap-3">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-2 shrink-0"></span>
+                            {v}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Lesson Level Violations */}
+                  {parsedAiReport.lessonViolations && parsedAiReport.lessonViolations.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="bg-slate-100 px-5 py-3 border-b border-slate-200">
+                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-orange-500">menu_book</span>
+                          Lesson Violations
+                        </h4>
+                      </div>
+                      <div className="p-5 grid gap-4">
+                        {parsedAiReport.lessonViolations.map((lv: any, idx: number) => (
+                          <div key={idx} className="bg-orange-50/50 border border-orange-100 p-4 rounded-xl">
+                            <h5 className="font-bold text-orange-900 text-sm mb-1">
+                              {lv.lessonTitle}
+                            </h5>
+                            <div className="mt-2 text-[10px] font-black px-2 py-1 bg-white text-orange-700 border border-orange-200 inline-block rounded-lg uppercase tracking-wider mb-2">
+                              {lv.violationType}
+                            </div>
+                            <p className="text-sm font-medium text-slate-700">
+                              <span className="font-bold text-slate-900">Issue:</span> {lv.reason}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* If no violations but isClean is false, show fallback */}
+                  {!parsedAiReport.isClean && (!parsedAiReport.courseViolations || parsedAiReport.courseViolations.length === 0) && (!parsedAiReport.lessonViolations || parsedAiReport.lessonViolations.length === 0) && (
+                     <div className="bg-white p-5 rounded-2xl border border-rose-200 text-rose-700 font-medium text-sm">
+                       Please review the overall quality of your course content.
+                     </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="px-8 py-5 border-t border-slate-100 bg-white flex justify-end items-center rounded-b-3xl gap-3">
+              <button
+                type="button"
+                onClick={() => setIsAiReportModalOpen(false)}
+                className="px-6 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors text-xs cursor-pointer"
+              >
+                Close Report
               </button>
             </div>
           </div>

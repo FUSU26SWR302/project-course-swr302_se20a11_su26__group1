@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { adminService } from '../services/adminService';
+import { fetchCourseCurriculum, fetchLearningLessonDetail } from '../services/courseService';
+import { problemService } from '../services/problemService';
 import type {
   AdminDashboardStats,
   AdminCourse,
@@ -16,7 +18,8 @@ import type {
   MonthlyFinancialBreakdown,
   OrderDetails,
   AwardDetails,
-  SaleDetails
+  SaleDetails,
+  PageResponse
 } from '../services/adminService';
 import Editor from '@monaco-editor/react';
 
@@ -28,61 +31,6 @@ const GENERATOR_TEMPLATES: Record<string, string> = {
   csharp: `using System;\n\npublic class Solution {\n    public static void Main() {\n        // Number of test cases\n        int numberOfTests = 3;\n        \n        for (int i = 0; i < numberOfTests; i++) {\n            // Write your logic here\n            \n            // DO NOT REMOVE\n            Console.WriteLine("---TESTCASE---");\n            Console.WriteLine("INPUT:");\n            \n            // Print your input here\n            \n            // DO NOT REMOVE\n            Console.WriteLine("OUTPUT:");\n            \n            // Print your output here\n        }\n    }\n}`
 };
 
-interface ProblemDetail {
-  difficulty: string;
-  difficultyClass: string;
-  description: string;
-  code: Record<string, string>;
-}
-
-
-const initialExercises = [
-  { name: 'Two Sum', difficulty: 'Easy', difficultyClass: 'bg-green-50 text-brand-green border border-green-150', submissions: '1,245', completed: true },
-  { name: 'Reverse Linked List', difficulty: 'Easy', difficultyClass: 'bg-green-50 text-brand-green border border-green-150', submissions: '850', completed: false },
-  { name: 'Spring Context Hierarchy Solver', difficulty: 'Medium', difficultyClass: 'bg-primary-light/50 text-primary border border-primary/20', submissions: '420', completed: false }
-];
-
-
-const problemData: Record<string, ProblemDetail> = {
-  "Two Sum": {
-    difficulty: "Easy",
-    difficultyClass: "bg-green-50 text-brand-green border border-green-150",
-    description: `
-      <p class="mb-4">Given an array of integers <code class="bg-slate-100 px-1.5 py-0.5 rounded border border-gray-200 font-mono text-xs">nums</code> and an integer <code class="bg-slate-100 px-1.5 py-0.5 rounded border border-gray-200 font-mono text-xs">target</code>, return <em>indices of the two numbers such that they add up to <code class="bg-slate-100 px-1.5 py-0.5 rounded border border-gray-200 font-mono text-xs">target</code></em>.</p>
-      <p class="mb-4">You may assume that each input would have <strong>exactly one solution</strong>, and you may not use the same element twice.</p>
-      <p class="mb-4">You can return the answer in any order.</p>
-    `,
-    code: {
-      "Java": `class Solution {\n    public int[] twoSum(int[] nums, int target) {\n        // Write your Java code here\n        return new int[] {};\n    }\n}`,
-      "C++": `class Solution {\npublic:\n    vector<int> twoSum(vector<int>& nums, int target) {\n        // Write your C++ code here\n        return {};\n    }\n};`,
-      "Python": `class Solution:\n    def twoSum(self, nums: List[int], target: int) -> List[int]:\n        # Write your Python code here\n        pass`
-    }
-  },
-  "Reverse Linked List": {
-    difficulty: "Easy",
-    difficultyClass: "bg-green-50 text-brand-green border border-green-150",
-    description: `
-      <p class="mb-4">Given the <code class="bg-slate-100 px-1.5 py-0.5 rounded border border-gray-200 font-mono text-xs">head</code> of a singly linked list, reverse the list, and return <em>its reversed list</em>.</p>
-    `,
-    code: {
-      "Java": `class Solution {\n    public ListNode reverseList(ListNode head) {\n        // Write your Java code here\n        return null;\n    }\n}`,
-      "C++": `class Solution {\npublic:\n    ListNode* reverseList(ListNode* head) {\n        // Write your C++ code here\n        return nullptr;\n    }\n};`,
-      "Python": `class Solution:\n    def reverseList(self, head: Optional[ListNode]) -> Optional[ListNode]:\n        # Write your Python code here\n        pass`
-    }
-  },
-  "Spring Context Hierarchy Solver": {
-    difficulty: "Medium",
-    difficultyClass: "bg-primary-light/50 text-primary border border-primary/20",
-    description: `
-      <p class="mb-4">Given a hierarchical relationship of Spring ApplicationContext names and their respective registered beans, resolve if a child context can correctly lookup a bean defined in its parent context or its own context.</p>
-    `,
-    code: {
-      "Java": `class Solution {\n    public boolean resolveBeanLookup(Map<String, String> contextParents, Map<String, List<String>> contextBeans, String lookupContext, String beanName) {\n        // Write your Java code here\n        return false;\n    }\n}`,
-      "C++": `class Solution {\npublic:\n    bool resolveBeanLookup(unordered_map<string, string>& contextParents, unordered_map<string, vector<string>>& contextBeans, string lookupContext, string beanName) {\n        // Write your C++ code here\n        return false;\n    }\n};`,
-      "Python": `class Solution:\n    def resolveBeanLookup(self, contextParents: Dict[str, str], contextBeans: Dict[str, List[str]], lookupContext: str, beanName: str) -> bool: \n        # Write your Python code here\n        return False`
-    }
-  }
-};
 
 const tabHeaderDetails: Record<string, { badge: string; icon: string; title: string; desc: string }> = {
   dashboard: {
@@ -229,162 +177,23 @@ const rankingFormatMinutes = (m: number): string => {
   return `${hrs}h ${mins}m`;
 };
 
-const FinancialAllTimeReport: React.FC<{ details: AdminFinancialDetails | null }> = ({ details }) => {
-  const [selectedYear, setSelectedYear] = useState<string>('ALL');
-
-  const availableYears = useMemo(() => {
-    const yearsSet = new Set<string>();
-    (details?.monthlyBreakdowns || []).forEach((b: MonthlyFinancialBreakdown) => {
-      if (b.datePrefix && b.datePrefix.length >= 4) {
-        const year = b.datePrefix.substring(0, 4);
-        yearsSet.add(year);
-      }
-    });
-    return Array.from(yearsSet).sort().reverse();
-  }, [details]);
-
-  const filteredBreakdowns = useMemo(() => {
-    const list = details?.monthlyBreakdowns || [];
-    if (selectedYear === 'ALL') return list;
-    return list.filter((b: MonthlyFinancialBreakdown) => b.datePrefix && b.datePrefix.startsWith(selectedYear));
-  }, [details, selectedYear]);
-
-  const summary = useMemo(() => {
-    let gross = 0;
-    let count = 0;
-    let rewards = 0;
-    let server = 0;
-    let marketing = 0;
-    let netProfit = 0;
-
-    filteredBreakdowns.forEach((item: MonthlyFinancialBreakdown) => {
-      gross += item.gross || 0;
-      count += item.count || 0;
-      rewards += item.rewards || 0;
-      server += item.server || 0;
-      marketing += item.marketing || 0;
-      netProfit += item.netProfit || 0;
-    });
-
-    const platformShare = Math.round(gross * 0.3);
-    const instructorShare = Math.round(gross * 0.7);
-    const gatewayFees = Math.round(gross * 0.02);
-
-    return {
-      gross,
-      count,
-      rewards,
-      server,
-      marketing,
-      netProfit,
-      platformShare,
-      instructorShare,
-      gatewayFees
-    };
-  }, [filteredBreakdowns]);
-
-  return (
-    <div className="flex flex-col gap-5 text-slate-800">
-      {/* Year Selector */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 p-4 rounded-2xl border border-slate-100 gap-3">
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-slate-600">Lọc theo năm báo cáo:</span>
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(e.target.value)}
-            className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-bold text-brand-blue outline-none cursor-pointer"
-          >
-            <option value="ALL">Toàn bộ thời gian hoạt động</option>
-            {availableYears.map(yr => (
-              <option key={yr} value={yr}>Năm {yr}</option>
-            ))}
-          </select>
-        </div>
-        <span className="text-[10px] font-black uppercase text-slate-400">
-          Thời gian: {selectedYear === 'ALL' ? 'Từ đầu hoạt động' : `Năm ${selectedYear}`}
-        </span>
-      </div>
-
-      {/* KPI summaries for selected range */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-          <p className="text-[10px] text-slate-400 uppercase font-black">Doanh thu gộp (Gross)</p>
-          <p className="text-sm font-mono font-black text-slate-900 mt-1">{summary.gross.toLocaleString()} ₫</p>
-        </div>
-        <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-          <p className="text-[10px] text-slate-400 uppercase font-black">Giữ lại Platform (30%)</p>
-          <p className="text-sm font-mono font-black text-indigo-600 mt-1">{summary.platformShare.toLocaleString()} ₫</p>
-        </div>
-        <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-          <p className="text-[10px] text-slate-400 uppercase font-black">Khóa học bán ra</p>
-          <p className="text-sm font-mono font-black text-slate-900 mt-1">{summary.count.toLocaleString()} copies</p>
-        </div>
-        <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-          <p className="text-[10px] text-slate-400 uppercase font-black">Lợi nhuận ròng (Net Profit)</p>
-          <p className={`text-sm font-mono font-black mt-1 ${summary.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-            {summary.netProfit.toLocaleString()} ₫
-          </p>
-        </div>
-      </div>
-
-      {/* Monthly Breakdown Sheet */}
-      <div>
-        <h4 className="font-display font-black text-slate-900 text-xs mb-3">
-          Bảng báo cáo chi tiết tài chính từng tháng
-        </h4>
-        <div className="overflow-x-auto border border-slate-100 rounded-xl">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 text-[10px] font-black text-slate-500 border-b border-slate-100 uppercase tracking-wider">
-                <th className="p-3">Tháng</th>
-                <th className="p-3 text-right">Doanh thu gộp</th>
-                <th className="p-3 text-right">Platform (30%)</th>
-                <th className="p-3 text-right">Giải thưởng (AWARD)</th>
-                <th className="p-3 text-right">Chi phí vận hành</th>
-                <th className="p-3 text-right">Lợi nhuận ròng</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-              {filteredBreakdowns.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-4 text-center text-slate-400 italic">Chưa có dữ liệu.</td>
-                </tr>
-              ) : (
-                filteredBreakdowns.map((b: MonthlyFinancialBreakdown, idx: number) => {
-                  const gross = b.gross || 0;
-                  const platformShare = Math.round(gross * 0.3);
-                  const gatewayFees = Math.round(gross * 0.02);
-                  const operCosts = (b.server || 0) + (b.marketing || 0) + gatewayFees;
-                  return (
-                    <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-3 text-slate-900 font-bold">{b.label}</td>
-                      <td className="p-3 text-right font-mono text-slate-900">{gross.toLocaleString()} ₫</td>
-                      <td className="p-3 text-right font-mono text-indigo-600">+{platformShare.toLocaleString()} ₫</td>
-                      <td className="p-3 text-right font-mono text-rose-500">-{b.rewards.toLocaleString()} ₫</td>
-                      <td className="p-3 text-right font-mono text-slate-500" title={`Server: ${(b.server || 0).toLocaleString()} ₫, Marketing: ${(b.marketing || 0).toLocaleString()} ₫, Gateway Fee (2%): ${gatewayFees.toLocaleString()} ₫`}>
-                        -{operCosts.toLocaleString()} ₫
-                      </td>
-                      <td className={`p-3 text-right font-mono font-bold ${b.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {b.netProfit.toLocaleString()} ₫
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 export const AdminDashboard: React.FC = () => {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
 
   // Navigation Active Tab: 'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial'
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial'>('dashboard');
+  const getTabFromUrl = (urlTab?: string): 'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial' => {
+    if (urlTab === 'courses') return 'courses';
+    if (urlTab === 'problems') return 'problems';
+    if (urlTab === 'contests') return 'contest';
+    if (urlTab === 'instructors') return 'instructor';
+    if (urlTab === 'users') return 'users';
+    if (urlTab === 'financial') return 'financial';
+    return 'dashboard';
+  };
+
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial'>(getTabFromUrl(tab));
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
   // States for API data
@@ -396,14 +205,11 @@ export const AdminDashboard: React.FC = () => {
   const [problems, setProblems] = useState<AdminProblem[]>([]);
   const [contests, setContests] = useState<AdminContest[]>([]);
   const [recentDeposits, setRecentDeposits] = useState<AdminDepositHistory[]>([]);
-  const [allDeposits, setAllDeposits] = useState<AdminDepositHistory[]>([]);
-  const [showAllDepositsModal, setShowAllDepositsModal] = useState<boolean>(false);
-  const [loadingAllDeposits, setLoadingAllDeposits] = useState<boolean>(false);
+  const [recentPayouts, setRecentPayouts] = useState<any[]>([]);
   const [monthlyRecords, setMonthlyRecords] = useState<MonthlyFinancialRecord[]>([]);
   const [topCourses, setTopCourses] = useState<TopRevenueCourse[]>([]);
   const [financialDetails, setFinancialDetails] = useState<AdminFinancialDetails | null>(null);
-  const [activeFinancialModal, setActiveFinancialModal] = useState<'gross' | 'instructor' | 'platform' | 'awards' | 'profit' | 'sales' | 'courses-sold-all' | null>(null);
-
+  const [activeFinancialModal, setActiveFinancialModal] = useState<string | null>(null);
   // Loading states
   const [loading, setLoading] = useState<boolean>(true);
   const [globalToast, setGlobalToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -413,7 +219,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   // Filter states
-  const [courseFilter, setCourseFilter] = useState<'ALL' | 'APPROVED' | 'PENDING' | 'REJECTED'>('ALL');
+  const [courseFilter, setCourseFilter] = useState<'APPROVED' | 'PENDING_ADMIN' | 'PENDING_AI' | 'REJECTED'>('PENDING_ADMIN');
 
   const [userSearch, setUserSearch] = useState('');
   const [userStatusFilter, setUserStatusFilter] = useState<'ALL' | 'ACTIVE' | 'LOCKED'>('ALL');
@@ -424,8 +230,18 @@ export const AdminDashboard: React.FC = () => {
   const [problemDifficultyFilter, setProblemDifficultyFilter] = useState<'ALL' | 'EASY' | 'MEDIUM' | 'HARD'>('ALL');
   const [problemScopeFilter, setProblemScopeFilter] = useState<'ALL' | 'PRACTICE' | 'CONTEST' | 'SHARED'>('ALL');
   const [problemSubTab, setProblemSubTab] = useState<'repository' | 'practice' | 'contest' | 'shared' | 'draft'>('repository');
+  const [problemPage, setProblemPage] = useState(1);
+  const [selectedProblems, setSelectedProblems] = useState<number[]>([]);
+  const problemsPerPage = 10;
   const [contestStatusFilter, setContestStatusFilter] = useState<'ALL' | 'DRAFT' | 'UPCOMING' | 'ONGOING' | 'ENDED' | 'DELETED'>('ALL');
   const [contestSubTab, setContestSubTab] = useState<'active' | 'trash'>('active');
+
+  useEffect(() => {
+    setProblemPage(1);
+    setSelectedProblems([]);
+  }, [problemSearch, problemDifficultyFilter, problemScopeFilter, problemSubTab]);
+
+
 
   // Status change confirm modal state
   const [statusConfirmTarget, setStatusConfirmTarget] = useState<{
@@ -478,9 +294,33 @@ export const AdminDashboard: React.FC = () => {
   const [reviewPlayerTab, setReviewPlayerTab] = useState<'overview' | 'qa' | 'exercises' | 'source-code' | 'quiz'>('overview');
   const [reviewLectureTitle, setReviewLectureTitle] = useState('1.1 Course Introduction');
   const [reviewCurriculumSections, setReviewCurriculumSections] = useState<Record<string, boolean>>({ sec1: true });
-  const [reviewCurrentProblem, setReviewCurrentProblem] = useState<string | null>(null);
+  const [reviewCurrentProblem, setReviewCurrentProblem] = useState<any | null>(null);
   const [reviewSolveLang, setReviewSolveLang] = useState('Java');
   const [reviewSolveCode, setReviewSolveCode] = useState('');
+  const [reviewChapters, setReviewChapters] = useState<any[]>([]);
+  const [reviewSelectedLessonId, setReviewSelectedLessonId] = useState<number | null>(null);
+  const [reviewVideoUrl, setReviewVideoUrl] = useState<string>('');
+  const [reviewTheoryContent, setReviewTheoryContent] = useState<string>('');
+  const [reviewSourceCode, setReviewSourceCode] = useState<string>('');
+  const [reviewExercises, setReviewExercises] = useState<any[]>([]);
+  const [reviewQuiz, setReviewQuiz] = useState<any | null>(null);
+  const [reviewIsLoading, setReviewIsLoading] = useState<boolean>(false);
+  const [loadingProblemDetail, setLoadingProblemDetail] = useState<boolean>(false);
+  const [reviewModerationReport, setReviewModerationReport] = useState<any | null>(null);
+  const [isAiReportModalOpen, setIsAiReportModalOpen] = useState<boolean>(false);
+  const [loadingModerationReport, setLoadingModerationReport] = useState<boolean>(false);
+
+  const parsedAiReport = useMemo(() => {
+    if (!reviewModerationReport || !reviewModerationReport.reportJson) return null;
+    try {
+      return typeof reviewModerationReport.reportJson === 'string' 
+        ? JSON.parse(reviewModerationReport.reportJson) 
+        : reviewModerationReport.reportJson;
+    } catch (e) {
+      return null;
+    }
+  }, [reviewModerationReport]);
+
 
   // Contest Detail Review Mode states
   const [reviewingContest, setReviewingContest] = useState<AdminContest | null>(() => {
@@ -608,18 +448,11 @@ export const AdminDashboard: React.FC = () => {
     setLoadingContestSubmissions(true);
     setErrorContestSubmissions(null);
     try {
-      const response = await fetch(`http://localhost:8080/nonstopcoding/contests/${contestId}/submissions`, {
-        credentials: 'include',
-      });
-      const data = await response.json();
-      if (data && data.result) {
-        setContestSubmissions(data.result);
-      } else {
-        setErrorContestSubmissions(data.message || 'Failed to fetch submissions');
-      }
-    } catch (err) {
+      const data = await adminService.getContestSubmissions(contestId);
+      setContestSubmissions(data);
+    } catch (err: any) {
       console.error('Error fetching contest submissions:', err);
-      setErrorContestSubmissions('Failed to fetch submissions');
+      setErrorContestSubmissions(err.message || 'Failed to fetch submissions');
     } finally {
       setLoadingContestSubmissions(false);
     }
@@ -629,34 +462,53 @@ export const AdminDashboard: React.FC = () => {
     setLoadingContestRanking(true);
     setErrorContestRanking(null);
     try {
-      const response = await fetch(`http://localhost:8080/nonstopcoding/api/v1/contests/${contestId}/scoreboard`, {
-        credentials: 'include',
-      });
-      const data = await response.json();
-      if (data && data.result) {
-        setRankingTeams(data.result.rows || []);
-      } else {
-        setErrorContestRanking(data.message || 'Failed to fetch rankings');
-      }
-    } catch (err) {
+      const data = await adminService.getContestScoreboard(contestId);
+      setRankingTeams(data?.rows || []);
+    } catch (err: any) {
       console.error('Error fetching ranking data:', err);
-      setErrorContestRanking('Failed to load rankings');
+      setErrorContestRanking(err.message || 'Failed to load rankings');
     } finally {
       setLoadingContestRanking(false);
     }
   };
 
   useEffect(() => {
+    let eventSource: EventSource | null = null;
+
     if (reviewingContest) {
       if (reviewContestTab === 'submissions') {
         fetchContestSubmissions(reviewingContest.id);
       } else if (reviewContestTab === 'ranking') {
         fetchContestRanking(reviewingContest.id);
+        
+        // Add SSE for realtime scoreboard updates
+        eventSource = new EventSource(`http://localhost:8080/nonstopcoding/api/v1/contests/${reviewingContest.id}/scoreboard/stream`, { withCredentials: true });
+        
+        eventSource.addEventListener('scoreboard-update', (event: any) => {
+          try {
+            const parsed = JSON.parse(event.data);
+            if (parsed && parsed.rows) {
+              setRankingTeams(parsed.rows);
+            }
+          } catch (err) {
+            console.error('Error parsing SSE scoreboard update:', err);
+          }
+        });
+
+        eventSource.onerror = (err) => {
+          console.error('EventSource error:', err);
+        };
       }
     } else {
       setContestSubmissions([]);
       setRankingTeams([]);
     }
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
   }, [reviewingContest, reviewContestTab]);
 
   useEffect(() => {
@@ -782,47 +634,48 @@ export const AdminDashboard: React.FC = () => {
     });
   };
 
-  // Fetch all dashboard data
+  // Fetch data based on the active tab
   const loadData = async () => {
     setLoading(true);
     try {
-      const [
-        statsRes,
-        coursesRes,
-        instsRes,
-        usersRes,
-        probsRes,
-        contestsRes,
-        recentDepositsRes,
-        tagsRes,
-        monthlyRecordsRes,
-        topCoursesRes,
-        financialDetailsRes
-      ] = await Promise.all([
-        adminService.getDashboardStats(),
-        adminService.getCourses(),
-        adminService.getInstructors(),
-        adminService.getUsers(),
-        adminService.getProblems(),
-        adminService.getContests(),
-        adminService.getRecentDeposits(),
-        adminService.getTags(),
-        adminService.getFinancialMonthlyRecords(),
-        adminService.getFinancialTopCourses(),
-        adminService.getFinancialDetails()
-      ]);
-
-      setStats(statsRes);
-      setCourses(coursesRes);
-      setInstructors(instsRes);
-      setUsers(usersRes);
-      setProblems(probsRes);
-      setContests(contestsRes);
-      setRecentDeposits(recentDepositsRes);
-      setAllTags(tagsRes || []);
-      setMonthlyRecords(monthlyRecordsRes || []);
-      setTopCourses(topCoursesRes || []);
-      setFinancialDetails(financialDetailsRes);
+      if (activeTab === 'dashboard') {
+        const [statsRes, recentDepositsRes] = await Promise.all([
+          adminService.getDashboardStats().catch(err => { console.error("Failed to load stats:", err); return null; }),
+          adminService.getRecentDeposits().catch(err => { console.error("Failed to load recent deposits:", err); return []; })
+        ]);
+        setStats(statsRes);
+        setRecentDeposits(recentDepositsRes || []);
+      } else if (activeTab === 'courses') {
+        const coursesRes = await adminService.getCourses().catch(err => { console.error("Failed to load courses:", err); return []; });
+        setCourses(coursesRes || []);
+      } else if (activeTab === 'problems') {
+        const [probsRes, tagsRes] = await Promise.all([
+          adminService.getProblems().catch(err => { console.error("Failed to load problems:", err); return []; }),
+          adminService.getTags().catch(err => { console.error("Failed to load tags:", err); return []; })
+        ]);
+        setProblems(probsRes || []);
+        setAllTags(tagsRes || []);
+      } else if (activeTab === 'contest') {
+        const contestsRes = await adminService.getContests().catch(err => { console.error("Failed to load contests:", err); return []; });
+        setContests(contestsRes || []);
+      } else if (activeTab === 'instructor') {
+        const instsRes = await adminService.getInstructors().catch(err => { console.error("Failed to load instructors:", err); return []; });
+        setInstructors(instsRes || []);
+      } else if (activeTab === 'users') {
+        const usersRes = await adminService.getUsers().catch(err => { console.error("Failed to load users:", err); return []; });
+        setUsers(usersRes || []);
+      } else if (activeTab === 'financial') {
+        const [monthlyRecordsRes, topCoursesRes, financialDetailsRes, payoutsRes] = await Promise.all([
+          adminService.getFinancialMonthlyRecords().catch(err => { console.error("Failed to load monthly records:", err); return []; }),
+          adminService.getFinancialTopCourses().catch(err => { console.error("Failed to load top courses:", err); return []; }),
+          adminService.getFinancialDetails().catch(err => { console.error("Failed to load financial details:", err); return null; }),
+          adminService.getFinancialPayouts(1, 3).catch(err => { console.error("Failed to load payouts:", err); return { content: [] }; })
+        ]);
+        setMonthlyRecords(monthlyRecordsRes || []);
+        setTopCourses(topCoursesRes || []);
+        setFinancialDetails(financialDetailsRes);
+        setRecentPayouts(payoutsRes?.content || []);
+      }
     } catch (error) {
       console.error("Error loading admin dashboard data:", error);
     } finally {
@@ -832,7 +685,27 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [activeTab, courseFilter]);
+
+  const exportFinancialDataToCSV = () => {
+    if (filteredFinancialData.length === 0) {
+      showGlobalToast("No data to export", "info");
+      return;
+    }
+    const headers = ["Label", "Start Date", "End Date", "Gross Revenue", "Courses Sold", "Contest Rewards", "Other Expenses", "Net Profit", "Instructor Share", "Platform Share"];
+    const csvRows = [headers.join(",")];
+    filteredFinancialData.forEach(r => {
+      csvRows.push(`"${r.label}","${r.startDate}","${r.endDate}",${r.grossRevenue},${r.coursesSold},${r.contestRewards},${r.otherExpenses},${r.netProfit},${r.instructorShare},${r.platformShare}`);
+    });
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'financial_report.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
 
 
@@ -1044,35 +917,98 @@ export const AdminDashboard: React.FC = () => {
 
   const topProblemsTotal = useMemo(() => topProblemsChartData.reduce((sum, c) => sum + c.count, 0), [topProblemsChartData]);
 
-  // Action handlers
-  const handleOpenAllDeposits = async () => {
-    setLoadingAllDeposits(true);
-    setShowAllDepositsModal(true);
-    const data = await adminService.getAllDeposits();
-    setAllDeposits(data);
-    setLoadingAllDeposits(false);
+
+
+  const getReviewYoutubeEmbedUrl = (url?: string) => {
+    if (!url) return '';
+    const regExp = new RegExp('^.*(youtu.be/|v/|u/\\w/|embed/|watch\\?v=|&v=)([^#&\\?]*).*');
+    const match = url.match(regExp);
+    if (match && match[2].length === 11) {
+      return `https://www.youtube.com/embed/${match[2]}`;
+    }
+    return url;
   };
 
-  const handleCloseAllDeposits = () => {
-    setShowAllDepositsModal(false);
-    setAllDeposits([]);
-  };
-
-  const handleReviewCourse = (course: AdminCourse) => {
+  const handleReviewCourse = async (course: AdminCourse) => {
     setActiveTab('courses');
     setReviewingCourse(course);
     setReviewPlayerTab('overview');
-    setReviewLectureTitle('1.1 Course Introduction');
-    setReviewCurriculumSections({ sec1: true });
+    setReviewLectureTitle('');
+    setReviewCurriculumSections({});
     setReviewCurrentProblem(null);
     setReviewSolveLang('Java');
-    setReviewSolveCode(problemData['Two Sum']?.code?.['Java'] || '');
+    setReviewSolveCode('');
+    
+    setLoadingModerationReport(true);
+    setReviewModerationReport(null);
+    adminService.getCourseModerationReport(course.id)
+      .then(data => {
+        setReviewModerationReport(data);
+      })
+      .catch(err => {
+        console.warn("No moderation report found for this course or failed to load:", err);
+      })
+      .finally(() => {
+        setLoadingModerationReport(false);
+      });
+    
+    setReviewIsLoading(true);
+    try {
+      const chapters = await fetchCourseCurriculum(course.id);
+      setReviewChapters(chapters);
+
+      // Expand first chapter by default
+      if (chapters.length > 0) {
+        setReviewCurriculumSections({ [`sec_${chapters[0].id}`]: true });
+        if (chapters[0].lessons && chapters[0].lessons.length > 0) {
+          const firstLesson = chapters[0].lessons[0];
+          setReviewLectureTitle(firstLesson.title);
+          setReviewSelectedLessonId(firstLesson.id);
+          
+          // Load first lesson details
+          const detail = await fetchLearningLessonDetail(course.id, firstLesson.id);
+          setReviewVideoUrl(detail.videoUrl || '');
+          setReviewTheoryContent(detail.theoryContent || '');
+          setReviewSourceCode(detail.sourceCode || '');
+          setReviewExercises(detail.problems || []);
+          setReviewQuiz(detail.quiz || null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load review curriculum:", err);
+      showGlobalToast("Failed to load course curriculum", "error");
+    } finally {
+      setReviewIsLoading(false);
+    }
+  };
+
+  const handleReviewSelectLesson = async (lessonId: number, lessonTitle: string) => {
+    if (!reviewingCourse) return;
+    setReviewLectureTitle(lessonTitle);
+    setReviewSelectedLessonId(lessonId);
+    setReviewCurrentProblem(null);
+    setReviewSolveCode('');
+    
+    setReviewIsLoading(true);
+    try {
+      const detail = await fetchLearningLessonDetail(reviewingCourse.id, lessonId);
+      setReviewVideoUrl(detail.videoUrl || '');
+      setReviewTheoryContent(detail.theoryContent || '');
+      setReviewSourceCode(detail.sourceCode || '');
+      setReviewExercises(detail.problems || []);
+      setReviewQuiz(detail.quiz || null);
+    } catch (err) {
+      console.error("Failed to load lesson details:", err);
+      showGlobalToast("Failed to load lesson details", "error");
+    } finally {
+      setReviewIsLoading(false);
+    }
   };
 
   const handleApproveCourse = async (courseId: string, status: 'APPROVED' | 'REJECTED') => {
     try {
       const updated = await adminService.approveCourse(courseId, status);
-      setCourses(prev => prev.map(c => c.id === courseId ? updated : c));
+      setCourses(prev => prev.map(c => String(c.id) === String(courseId) ? updated : c));
 
       setReviewingCourse(null);
       // reload stats
@@ -1813,7 +1749,6 @@ export const AdminDashboard: React.FC = () => {
 
   // Computations for filters
   const filteredCourses = useMemo(() => {
-    if (courseFilter === 'ALL') return courses;
     return courses.filter(c => c.status === courseFilter);
   }, [courses, courseFilter]);
 
@@ -1876,6 +1811,10 @@ export const AdminDashboard: React.FC = () => {
     return list;
   }, [contests, contestStatusFilter, contestSubTab]);
 
+  const totalProblemPages = Math.ceil(filteredProblems.length / problemsPerPage);
+  const safeProblemPage = Math.min(problemPage, Math.max(1, totalProblemPages));
+  const paginatedProblems = filteredProblems.slice((safeProblemPage - 1) * problemsPerPage, safeProblemPage * problemsPerPage);
+
   // Auth checking context (Only allow role == ADMIN, or default username admin, let's keep it safe)
   // const isAdmin = useMemo(() => {
   //   return (user?.role as string) === 'ADMIN' || user?.username?.toLowerCase().includes('admin') || true;
@@ -1896,7 +1835,7 @@ export const AdminDashboard: React.FC = () => {
   }
 
   return (
-    <div className="bg-[#f0f4f9] text-text-main font-body min-h-screen flex flex-row antialiased selection:bg-primary-light selection:text-brand-blue relative overflow-x-hidden w-full text-left">
+    <div className="bg-[#f0f4f9] text-text-main font-body h-screen overflow-hidden flex flex-row antialiased selection:bg-primary-light selection:text-brand-blue w-full text-left">
       <style>{`
         .material-symbols-outlined {
           font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -2025,7 +1964,7 @@ export const AdminDashboard: React.FC = () => {
             className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs md:text-sm font-semibold transition-all duration-200 justify-center md:justify-start shadow-md shadow-primary/20"
           >
             <span className="material-symbols-outlined text-[20px] shrink-0">swap_horiz</span>
-            <span className="sidebar-footer-text whitespace-nowrap">Student View</span>
+            <span className="sidebar-footer-text whitespace-nowrap">Customer View</span>
           </Link>
 
           <div className="flex items-center gap-3 p-2 rounded-xl bg-brand-blue-light/30">
@@ -2056,16 +1995,9 @@ export const AdminDashboard: React.FC = () => {
       <div
         id="main-content"
         className={`flex-grow transition-all duration-300 relative z-10 ${isSidebarCollapsed ? 'main-collapsed' : 'main-expanded'
-          } min-h-screen flex flex-col`}
+          } h-full flex flex-col overflow-y-auto`}
       >
-        {loading ? (
-          <div className="flex-grow flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <span className="animate-spin material-symbols-outlined text-4xl text-primary">sync</span>
-              <p className="text-sm text-text-muted font-bold">Synchronizing Admin Panel Data...</p>
-            </div>
-          </div>
-        ) : (activeTab === 'courses' && reviewingCourse) ? (
+        {(activeTab === 'courses' && reviewingCourse) ? (
           <div className="flex-grow flex flex-col bg-[#f0f4f9] animate-fade-in w-full">
             {/* Admin Review Action Banner */}
             <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border-b border-amber-200 px-6 py-3 flex items-center justify-between shrink-0 shadow-sm sticky top-0 z-20">
@@ -2085,21 +2017,32 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsAiReportModalOpen(true)}
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-sm flex items-center gap-2 border border-indigo-200"
+                >
+                  <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                  View AI Audit Report
+                </button>
                 <span className="text-xs text-amber-700 font-semibold hidden md:inline">By {reviewingCourse.instructorName} • {reviewingCourse.price.toLocaleString('vi-VN')} ₫</span>
-                <button
-                  onClick={() => handleApproveCourse(reviewingCourse.id, 'APPROVED')}
-                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
-                >
-                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                  Approve
-                </button>
-                <button
-                  onClick={() => handleApproveCourse(reviewingCourse.id, 'REJECTED')}
-                  className="bg-red-500 hover:bg-red-600 text-white font-bold text-xs px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
-                >
-                  <span className="material-symbols-outlined text-[16px]">cancel</span>
-                  Reject
-                </button>
+                {reviewingCourse.status === 'PENDING_ADMIN' && (
+                  <>
+                    <button
+                      onClick={() => handleApproveCourse(reviewingCourse.id, 'APPROVED')}
+                      className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleApproveCourse(reviewingCourse.id, 'REJECTED')}
+                      className="bg-red-500 hover:bg-red-600 text-white font-bold text-xs px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">cancel</span>
+                      Reject
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -2113,11 +2056,15 @@ export const AdminDashboard: React.FC = () => {
                     <h1 className="text-2xl md:text-3xl font-display font-black text-brand-blue leading-tight">{reviewingCourse.title}</h1>
                     <p className="text-sm text-text-muted">By {reviewingCourse.instructorName}</p>
                   </div>
-                  <div className="bg-surface py-2 px-4 rounded-xl shadow-[0_2px_12px_rgba(26,54,93,0.04)] border border-gray-100 flex items-center gap-3 shrink-0">
-                    <span className="material-symbols-outlined text-amber-500 bg-amber-50 p-1.5 rounded-lg text-lg">pending</span>
+                  <div className={`bg-surface py-2 px-4 rounded-xl shadow-[0_2px_12px_rgba(26,54,93,0.04)] border border-gray-100 flex items-center gap-3 shrink-0 ${reviewingCourse.status === 'REJECTED' ? 'bg-rose-50 border-rose-100' : ''}`}>
+                    <span className={`material-symbols-outlined p-1.5 rounded-lg text-lg ${reviewingCourse.status === 'REJECTED' ? 'text-rose-500 bg-rose-100' : 'text-amber-500 bg-amber-50'}`}>
+                      {reviewingCourse.status === 'REJECTED' ? 'cancel' : 'pending'}
+                    </span>
                     <div>
-                      <p className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Status</p>
-                      <p className="text-[15px] font-extrabold text-amber-600 leading-none mt-0.5">Pending Review</p>
+                      <p className={`text-[10px] uppercase tracking-wider font-semibold ${reviewingCourse.status === 'REJECTED' ? 'text-rose-400' : 'text-text-muted'}`}>Status</p>
+                      <p className={`text-[15px] font-extrabold leading-none mt-0.5 ${reviewingCourse.status === 'REJECTED' ? 'text-rose-600' : 'text-amber-600'}`}>
+                        {reviewingCourse.status === 'REJECTED' ? 'Rejected' : 'Pending Review'}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2128,25 +2075,31 @@ export const AdminDashboard: React.FC = () => {
                   <div className="lg:col-span-9 flex flex-col gap-6">
 
                     {/* Video Player */}
-                    <div className="w-full bg-[#0a0f1d] rounded-2xl overflow-hidden shadow-lg border border-gray-800 aspect-video relative flex items-center justify-center group" style={{ maxHeight: '520px' }}>
-                      <img src={reviewingCourse.thumbnailUrl} alt="Thumbnail" className="absolute inset-0 w-full h-full object-cover opacity-30" />
-                      <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/40 group-hover:bg-black/50 transition-colors">
-                        <button className="bg-primary hover:bg-primary-hover hover:scale-105 text-white rounded-full p-5 shadow-2xl transition-all duration-300 flex items-center justify-center">
-                          <span className="material-symbols-outlined text-[48px] icon-fill" style={{ fontVariationSettings: "'FILL' 1" }}>play_arrow</span>
-                        </button>
-                        <p className="text-white/80 text-sm font-semibold mt-3 bg-black/40 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">{reviewLectureTitle}</p>
-                      </div>
-                      {/* Video Controls */}
-                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 to-transparent p-4 flex items-center gap-4 z-20">
-                        <span className="material-symbols-outlined text-white hover:text-primary cursor-pointer transition-colors" style={{ fontVariationSettings: "'FILL' 1" }}>play_arrow</span>
-                        <div className="flex-grow h-1 bg-white/20 rounded-full cursor-pointer relative">
-                          <div className="absolute left-0 top-0 h-full bg-primary rounded-full" style={{ width: '30%' }}></div>
-                          <div className="absolute w-3 h-3 bg-white rounded-full top-1/2 -translate-y-1/2 shadow opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: '30%' }}></div>
-                        </div>
-                        <span className="font-mono text-xs text-white/90">03:45 / 12:45</span>
-                        <span className="material-symbols-outlined text-white hover:text-primary cursor-pointer transition-colors">volume_up</span>
-                        <span className="material-symbols-outlined text-white hover:text-primary cursor-pointer transition-colors">fullscreen</span>
-                      </div>
+                    <div className="w-full bg-[#0a0f1d] rounded-2xl overflow-hidden shadow-lg border border-gray-800 aspect-video relative flex items-center justify-center" style={{ maxHeight: '520px' }}>
+                      {reviewVideoUrl ? (
+                        getReviewYoutubeEmbedUrl(reviewVideoUrl).includes('youtube.com') ? (
+                          <iframe
+                            src={getReviewYoutubeEmbedUrl(reviewVideoUrl)}
+                            className="w-full h-full border-none"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                          />
+                        ) : (
+                          <video
+                            src={reviewVideoUrl}
+                            controls
+                            className="w-full h-full object-contain"
+                          />
+                        )
+                      ) : (
+                        <>
+                          <img src={reviewingCourse.thumbnailUrl} alt="Thumbnail" className="absolute inset-0 w-full h-full object-cover opacity-30" />
+                          <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/40">
+                            <span className="material-symbols-outlined text-[48px] text-white/50">play_disabled</span>
+                            <p className="text-white/80 text-sm font-semibold mt-3 bg-black/40 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">No Video for this Lesson</p>
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     {/* Sub-tab Navigation */}
@@ -2155,7 +2108,7 @@ export const AdminDashboard: React.FC = () => {
                         { key: 'overview', icon: 'info', label: 'Theory Content' },
                         { key: 'qa', icon: 'forum', label: 'Q&A' },
                         { key: 'exercises', icon: 'terminal', label: 'Exercises' },
-                        { key: 'quiz', icon: 'quiz', label: 'Quiz' },
+                        { key: 'quiz', icon: 'quiz', label: 'Quiz' }
                       ] as const).map((tab) => (
                         <button
                           key={tab.key}
@@ -2170,224 +2123,255 @@ export const AdminDashboard: React.FC = () => {
 
                     {/* Tab Content */}
                     <div className="bg-surface rounded-2xl border border-gray-200 p-6 min-h-[300px]">
-
-                      {/* Overview Tab */}
-                      {reviewPlayerTab === 'overview' && (
-                        <div className="space-y-4 animate-fade-in">
-                          <h2 className="text-xl font-bold text-text-main">{reviewLectureTitle}</h2>
-                          <div className="prose max-w-none text-sm text-text-muted space-y-4 leading-relaxed">
-                            <h3 className="font-bold text-text-main text-base">Course Overview</h3>
-                            <p>{reviewingCourse.shortDescription}</p>
-                            <h3 className="font-bold text-text-main text-base mt-6">Detailed Description</h3>
-                            <p className="whitespace-pre-line">{reviewingCourse.longDescription}</p>
-                            <div className="bg-primary-light/35 p-5 rounded-xl border border-primary/10 flex gap-4 mt-6">
-                              <span className="material-symbols-outlined text-primary text-[24px]">lightbulb</span>
-                              <div>
-                                <p className="font-bold text-text-main text-sm">Course Info</p>
-                                <p className="text-xs text-text-muted mt-1 leading-normal">
-                                  {reviewingCourse.totalChapters} Chapters • {reviewingCourse.totalLessons} Lessons • {reviewingCourse.totalQuizzes} Quizzes • {reviewingCourse.totalVideos} Videos
-                                </p>
-                              </div>
-                            </div>
-                          </div>
+                      {reviewIsLoading && (
+                        <div className="flex flex-col items-center justify-center py-12 gap-3 text-text-muted">
+                          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                          <p className="text-xs font-semibold">Loading lesson content...</p>
                         </div>
                       )}
 
-                      {/* Q&A Tab */}
-                      {reviewPlayerTab === 'qa' && (
-                        <div className="animate-fade-in">
-                          <h2 className="text-lg font-bold text-text-main mb-4">Questions & Answers in this lesson</h2>
-                          <div className="flex gap-3 mb-6">
-                            <div className="relative flex-1">
-                              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[20px]">search</span>
-                              <input className="w-full bg-surface-gray border border-gray-200 rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-primary transition-colors text-text-main" placeholder="Search questions..." type="text" />
-                            </div>
-                            <button className="bg-primary hover:bg-primary-hover text-white px-5 py-2 rounded-xl font-bold text-xs transition-colors whitespace-nowrap">Ask a new question</button>
-                          </div>
-                          <div className="space-y-6">
-                            <div className="border-b border-gray-100 pb-4">
-                              <div className="flex gap-3">
-                                <div className="w-9 h-9 rounded-full bg-slate-100 border border-gray-200 flex items-center justify-center shrink-0">
-                                  <span className="material-symbols-outlined text-text-muted text-[18px]">person</span>
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span className="font-bold text-sm text-text-main">Alex Chen</span>
-                                    <span className="text-[10px] text-text-muted">2 hours ago</span>
-                                  </div>
-                                  <p className="text-sm font-semibold text-text-main mb-1">Error initializing Spring Boot application template</p>
-                                  <p className="text-xs text-text-muted leading-relaxed line-clamp-2">Getting 'java: error: invalid source release: 17' when compiling. What could be wrong with my JDK configurations?</p>
-                                  <div className="flex items-center gap-3 mt-2 text-[11px] text-text-muted font-semibold">
-                                    <span className="flex items-center gap-1"><span className="material-symbols-outlined text-brand-green text-[14px]">thumb_up</span> 4 likes</span>
-                                    <span className="flex items-center gap-1"><span className="material-symbols-outlined text-primary text-[14px]">comment</span> 2 replies</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="border-b border-gray-100 pb-4">
-                              <div className="flex gap-3">
-                                <div className="w-9 h-9 rounded-full bg-slate-100 border border-gray-200 flex items-center justify-center shrink-0">
-                                  <span className="material-symbols-outlined text-text-muted text-[18px]">person</span>
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span className="font-bold text-sm text-text-main">Sarah Jenkins</span>
-                                    <span className="text-[10px] text-text-muted">1 day ago</span>
-                                  </div>
-                                  <p className="text-sm font-semibold text-text-main mb-1">IntelliJ Ultimate vs Community</p>
-                                  <p className="text-xs text-text-muted leading-relaxed line-clamp-2">Is IntelliJ Ultimate strictly necessary for Spring Boot projects, or is Community Edition sufficient for general microservice development?</p>
-                                  <div className="flex items-center gap-3 mt-2 text-[11px] text-text-muted font-semibold">
-                                    <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">thumb_up</span> 0 likes</span>
-                                    <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">comment</span> 1 reply</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Exercises Tab */}
-                      {reviewPlayerTab === 'exercises' && (
-                        <div className="animate-fade-in">
-                          {reviewCurrentProblem === null ? (
-                            <div>
-                              <h2 className="text-lg font-bold text-text-main mb-1">Practice Problems</h2>
-                              <p className="text-xs text-text-muted mb-4">Solve these algorithmic challenges to solidify your understanding of the lesson.</p>
-                              <div className="overflow-x-auto border border-gray-200 rounded-xl">
-                                <table className="w-full text-left border-collapse">
-                                  <thead>
-                                    <tr className="bg-surface-gray border-b border-gray-200">
-                                      <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted text-center w-16">Status</th>
-                                      <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted">Title</th>
-                                      <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted w-24">Difficulty</th>
-                                      <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted text-right w-28">Submissions</th>
-                                      <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted text-center w-24">Action</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-150">
-                                    {initialExercises.map((ex, idx) => (
-                                      <tr key={idx} className="hover:bg-surface-gray/50 transition-colors">
-                                        <td className="p-3 text-center">
-                                          {ex.completed ? (
-                                            <span className="material-symbols-outlined text-brand-green text-[18px] icon-fill" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                                          ) : (
-                                            <span className="material-symbols-outlined text-text-muted text-[18px]">radio_button_unchecked</span>
-                                          )}
-                                        </td>
-                                        <td className="p-3 text-sm font-semibold text-text-main">{ex.name}</td>
-                                        <td className="p-3"><span className={`border px-2 py-0.5 rounded text-[10px] font-bold ${ex.difficultyClass}`}>{ex.difficulty}</span></td>
-                                        <td className="p-3 text-right text-xs text-text-muted font-mono">{ex.submissions}</td>
-                                        <td className="p-3 text-center">
-                                          <button
-                                            onClick={() => {
-                                              setReviewCurrentProblem(ex.name);
-                                              setReviewSolveLang('Java');
-                                              setReviewSolveCode(problemData[ex.name]?.code?.['Java'] || '');
-                                            }}
-                                            className="border border-gray-200 hover:border-primary hover:text-primary bg-white text-text-main px-3 py-1 rounded font-bold text-xs transition-all"
-                                          >
-                                            Solve
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex flex-col gap-6 animate-fade-in">
-                              <div className="flex items-center justify-between border-b border-gray-200 pb-4">
-                                <button
-                                  onClick={() => setReviewCurrentProblem(null)}
-                                  className="flex items-center gap-1.5 text-xs font-bold text-text-muted hover:text-primary transition-all bg-transparent border-none cursor-pointer"
-                                >
-                                  <span className="material-symbols-outlined text-[16px]">arrow_back</span> Back to Problems
-                                </button>
-                                <div className="flex items-center gap-3">
-                                  <h3 className="text-base font-bold text-text-main">{reviewCurrentProblem}</h3>
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${problemData[reviewCurrentProblem]?.difficultyClass}`}>
-                                    {problemData[reviewCurrentProblem]?.difficulty}
-                                  </span>
-                                </div>
-                              </div>
-                              <div
-                                className="prose max-w-none text-sm text-text-muted leading-relaxed"
-                                dangerouslySetInnerHTML={{ __html: problemData[reviewCurrentProblem]?.description || '' }}
-                              />
-                              <div className="border border-gray-200 rounded-xl overflow-hidden bg-[#1e1e1e] shadow-lg flex flex-col">
-                                <div className="bg-[#252526] border-b border-[#333333] px-4 py-2 flex justify-between items-center">
-                                  <select
-                                    value={reviewSolveLang}
-                                    onChange={(e) => {
-                                      setReviewSolveLang(e.target.value);
-                                      setReviewSolveCode(problemData[reviewCurrentProblem!]?.code?.[e.target.value] || '');
-                                    }}
-                                    className="bg-[#2d2d2d] text-white border-none rounded px-3 py-1 text-sm focus:ring-0 cursor-pointer outline-none"
-                                  >
-                                    <option value="Java">Java</option>
-                                    <option value="C++">C++</option>
-                                    <option value="Python">Python</option>
-                                  </select>
-                                  <button
-                                    onClick={() => setReviewSolveCode(problemData[reviewCurrentProblem!]?.code?.[reviewSolveLang] || '')}
-                                    className="text-[#cccccc] hover:text-white transition-colors bg-transparent border-none cursor-pointer"
-                                    title="Reset Template"
-                                  >
-                                    <span className="material-symbols-outlined text-xl">restart_alt</span>
-                                  </button>
-                                </div>
-                                <div className="flex font-mono text-sm leading-6 p-4">
-                                  <div className="w-10 text-[#858585] text-right pr-4 select-none">
-                                    {reviewSolveCode.split('\n').map((_, i) => <div key={i}>{i + 1}</div>)}
-                                  </div>
-                                  <div className="flex-1">
-                                    <textarea
-                                      value={reviewSolveCode}
-                                      onChange={(e) => setReviewSolveCode(e.target.value)}
-                                      className="w-full bg-transparent text-[#d4d4d4] border-none p-0 focus:ring-0 resize-none font-mono text-sm leading-6 focus:outline-none outline-none shadow-none"
-                                      rows={12}
-                                      spellCheck={false}
-                                    />
-                                  </div>
-                                </div>
-                                <div className="bg-[#252526] border-t border-[#333333] px-4 py-3 flex justify-end gap-3">
-                                  <button className="bg-primary hover:bg-primary-hover text-white px-8 py-2 rounded-lg font-bold text-sm transition-all shadow-md">
-                                    Submit
-                                  </button>
-                                </div>
+                      {!reviewIsLoading && (
+                        <>
+                          {/* Overview Tab */}
+                          {reviewPlayerTab === 'overview' && (
+                            <div className="space-y-4 animate-fade-in">
+                              <h2 className="text-xl font-bold text-text-main">{reviewLectureTitle || 'No lesson selected'}</h2>
+                              <div className="prose max-w-none text-sm text-text-muted space-y-4 leading-relaxed">
+                                <h3 className="font-bold text-text-main text-sm">Lesson Content / Theory</h3>
+                                <div 
+                                  className="bg-slate-50 border border-gray-200 p-5 rounded-2xl leading-relaxed whitespace-pre-line"
+                                  dangerouslySetInnerHTML={{ __html: reviewTheoryContent || 'No theoretical description provided for this lesson.' }} 
+                                />
                               </div>
                             </div>
                           )}
-                        </div>
-                      )}
 
-                      {/* Quiz Tab */}
-                      {reviewPlayerTab === 'quiz' && (
-                        <div className="animate-fade-in">
-                          <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-3">
-                            <h2 className="text-lg font-bold text-text-main">Knowledge Check</h2>
-                            <span className="bg-slate-100 text-text-muted border border-gray-200 px-3 py-1 rounded-full text-xs font-bold">Question 1 of 5</span>
-                          </div>
-                          <div className="bg-surface p-2">
-                            <h3 className="text-base font-bold text-text-main mb-4 leading-snug">In Spring Boot, which annotation is used to map HTTP GET requests onto specific handler methods?</h3>
-                            <div className="space-y-3">
-                              {['@PostMapping', '@GetMapping', '@RequestMapping', '@PathMapping'].map((opt) => (
-                                <label key={opt} className="flex items-center gap-3 p-3.5 border border-gray-200 rounded-xl hover:bg-surface-gray hover:border-primary cursor-pointer transition-all">
-                                  <input className="w-4 h-4 text-primary border-gray-300 focus:ring-primary" name="reviewQuiz1" type="radio" />
-                                  <span className="text-sm font-medium text-text-main">{opt}</span>
-                                </label>
-                              ))}
+                          {/* Q&A Tab */}
+                          {reviewPlayerTab === 'qa' && (
+                            <div className="animate-fade-in space-y-4">
+                              <h2 className="text-lg font-bold text-text-main">Questions & Answers</h2>
+                              <p className="text-xs text-text-muted">Questions asked by students in this lesson will be listed here.</p>
+                              <div className="text-center py-8 text-text-muted italic bg-slate-50 border border-gray-200 rounded-xl">
+                                No questions have been posted for this lesson yet.
+                              </div>
                             </div>
-                            <div className="border-t border-gray-100 mt-6 pt-4 flex justify-between items-center">
-                              <span className="text-text-muted hover:text-primary font-bold text-xs transition-colors cursor-pointer">Skip Question</span>
-                              <button className="bg-primary hover:bg-primary-hover text-white px-5 py-2 rounded-xl font-bold text-xs transition-colors">Submit Answer</button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                          )}
 
+                          {/* Exercises Tab */}
+                          {reviewPlayerTab === 'exercises' && (
+                            <div className="animate-fade-in">
+                              {loadingProblemDetail ? (
+                                <div className="flex flex-col items-center justify-center py-12 gap-2 text-text-muted">
+                                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                                  <p className="text-xs">Loading problem details...</p>
+                                </div>
+                              ) : reviewCurrentProblem === null ? (
+                                <div>
+                                  <h2 className="text-lg font-bold text-text-main mb-1">Coding Exercises</h2>
+                                  <p className="text-xs text-text-muted mb-4">Practice tasks attached to this lesson for code review.</p>
+                                  {reviewExercises.length === 0 ? (
+                                    <div className="text-center py-8 text-text-muted italic bg-slate-50 border border-gray-200 rounded-xl">
+                                      No coding exercises linked to this lesson.
+                                    </div>
+                                  ) : (
+                                    <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                                      <table className="w-full text-left border-collapse">
+                                        <thead>
+                                          <tr className="bg-surface-gray border-b border-gray-200">
+                                            <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted text-center w-16">Status</th>
+                                            <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted">Title</th>
+                                            <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted w-24">Difficulty</th>
+                                            <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted text-right w-28">Score</th>
+                                            <th className="p-3 text-[11px] font-bold uppercase tracking-wider text-text-muted text-center w-24">Action</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-150">
+                                          {reviewExercises.map((ex, idx) => (
+                                            <tr key={idx} className="hover:bg-surface-gray/50 transition-colors">
+                                              <td className="p-3 text-center">
+                                                <span className="material-symbols-outlined text-text-muted text-[18px]">radio_button_unchecked</span>
+                                              </td>
+                                              <td className="p-3 text-sm font-semibold text-text-main">{ex.title}</td>
+                                              <td className="p-3">
+                                                <span className={`border px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                  ex.difficulty === 'Easy' 
+                                                    ? 'bg-green-50 text-brand-green border border-green-150' 
+                                                    : ex.difficulty === 'Medium' 
+                                                    ? 'bg-primary-light/50 text-primary border border-primary/20' 
+                                                    : 'bg-red-50 text-red-600 border border-red-200'
+                                                }`}>
+                                                  {ex.difficulty}
+                                                </span>
+                                              </td>
+                                              <td className="p-3 text-right text-xs text-text-muted font-mono">{ex.score} pts</td>
+                                              <td className="p-3 text-center">
+                                                <button
+                                                  onClick={async () => {
+                                                    setLoadingProblemDetail(true);
+                                                    try {
+                                                      const data = await problemService.fetchProblemDetail(ex.id);
+                                                      setReviewCurrentProblem(data);
+                                                      const availableLangs = Object.keys(data.templates || {});
+                                                      const defaultLang = availableLangs.includes('Java') ? 'Java' : (availableLangs[0] || 'Java');
+                                                      setReviewSolveLang(defaultLang);
+                                                      setReviewSolveCode(data.templates?.[defaultLang] || 'class Solution {\n}');
+                                                    } catch (err) {
+                                                      console.error("Failed to load problem description:", err);
+                                                      showGlobalToast("Failed to load problem description", "error");
+                                                    } finally {
+                                                      setLoadingProblemDetail(false);
+                                                    }
+                                                  }}
+                                                  className="border border-gray-200 hover:border-primary hover:text-primary bg-white text-text-main px-3 py-1 rounded font-bold text-xs transition-all"
+                                                >
+                                                  Review
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-6 animate-fade-in">
+                                  <div className="flex items-center justify-between border-b border-gray-200 pb-4">
+                                    <button
+                                      onClick={() => setReviewCurrentProblem(null)}
+                                      className="flex items-center gap-1.5 text-xs font-bold text-text-muted hover:text-primary transition-all bg-transparent border-none cursor-pointer"
+                                    >
+                                      <span className="material-symbols-outlined text-[16px]">arrow_back</span> Back to Problems
+                                    </button>
+                                    <div className="flex items-center gap-3">
+                                      <h3 className="text-base font-bold text-text-main">{reviewCurrentProblem.title}</h3>
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                        reviewCurrentProblem.difficulty === 'Easy' 
+                                          ? 'bg-green-50 text-brand-green border border-green-150' 
+                                          : reviewCurrentProblem.difficulty === 'Medium' 
+                                          ? 'bg-primary-light/50 text-primary border border-primary/20' 
+                                          : 'bg-red-50 text-red-600 border border-red-200'
+                                      }`}>
+                                        {reviewCurrentProblem.difficulty}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div
+                                    className="prose max-w-none text-sm text-text-muted leading-relaxed"
+                                    dangerouslySetInnerHTML={{ __html: reviewCurrentProblem.description || '' }}
+                                  />
+                                  <div className="border border-gray-200 rounded-xl overflow-hidden bg-[#1e1e1e] shadow-lg flex flex-col">
+                                    <div className="bg-[#252526] border-b border-[#333333] px-4 py-2 flex justify-between items-center">
+                                      <select
+                                        value={reviewSolveLang}
+                                        onChange={(e) => {
+                                          setReviewSolveLang(e.target.value);
+                                          setReviewSolveCode(reviewCurrentProblem.templates?.[e.target.value] || '');
+                                        }}
+                                        className="bg-[#2d2d2d] text-white border-none rounded px-3 py-1 text-sm focus:ring-0 cursor-pointer outline-none"
+                                      >
+                                        {Object.keys(reviewCurrentProblem.templates || {}).map(lang => (
+                                          <option key={lang} value={lang}>{lang}</option>
+                                        ))}
+                                      </select>
+                                      <button
+                                        onClick={() => setReviewSolveCode(reviewCurrentProblem.templates?.[reviewSolveLang] || '')}
+                                        className="text-[#cccccc] hover:text-white transition-colors bg-transparent border-none cursor-pointer"
+                                        title="Reset Template"
+                                      >
+                                        <span className="material-symbols-outlined text-xl">restart_alt</span>
+                                      </button>
+                                    </div>
+                                    <div className="flex font-mono text-sm leading-6 p-4">
+                                      <div className="w-10 text-[#858585] text-right pr-4 select-none">
+                                        {(reviewSolveCode || '').split('\n').map((_, i) => <div key={i}>{i + 1}</div>)}
+                                      </div>
+                                      <div className="flex-1">
+                                        <textarea
+                                          value={reviewSolveCode}
+                                          onChange={(e) => setReviewSolveCode(e.target.value)}
+                                          className="w-full bg-transparent text-[#d4d4d4] border-none p-0 focus:ring-0 resize-none font-mono text-sm leading-6 focus:outline-none outline-none shadow-none"
+                                          rows={12}
+                                          spellCheck={false}
+                                          readOnly
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Source Code Tab */}
+                          {reviewPlayerTab === 'source-code' && (
+                            <div className="animate-fade-in space-y-4">
+                              <h2 className="text-lg font-bold text-text-main mb-1">Lesson Source Code</h2>
+                              <p className="text-xs text-text-muted mb-4">Review the source code submitted by the instructor for this lesson.</p>
+                              
+                              {!reviewSourceCode ? (
+                                <div className="text-center py-8 text-text-muted italic bg-slate-50 border border-gray-200 rounded-xl">
+                                  No source code resources provided for this lesson.
+                                </div>
+                              ) : (
+                                <div className="border border-gray-200 rounded-xl overflow-hidden bg-[#1e1e1e] shadow-lg flex flex-col font-mono text-sm leading-6 p-4 text-[#d4d4d4]">
+                                  <pre className="overflow-x-auto whitespace-pre-wrap">{reviewSourceCode}</pre>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Quiz Tab */}
+                          {reviewPlayerTab === 'quiz' && (
+                            <div className="animate-fade-in">
+                              <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-3">
+                                <h2 className="text-lg font-bold text-text-main">Knowledge Check (Quiz Audit)</h2>
+                              </div>
+                              <div className="bg-surface p-2">
+                                {!reviewQuiz || !reviewQuiz.questions || reviewQuiz.questions.length === 0 ? (
+                                  <div className="text-center py-8 text-text-muted italic bg-slate-50 border border-gray-200 rounded-xl">
+                                    No quiz questions available for this lesson.
+                                  </div>
+                                ) : (
+                                  <div className="space-y-6">
+                                    {reviewQuiz.questions.map((q: any, qIdx: number) => (
+                                      <div key={q.questionId} className="bg-slate-50 p-4 border border-gray-200 rounded-xl">
+                                        <h3 className="text-sm font-bold text-text-main mb-3 leading-snug">
+                                          Question {qIdx + 1}: {q.content}
+                                        </h3>
+                                        <div className="space-y-2">
+                                          {q.options.map((opt: any) => (
+                                            <div
+                                              key={opt.optionId}
+                                              className={`flex items-center gap-3 p-3 border rounded-xl ${
+                                                opt.isCorrect 
+                                                  ? 'bg-green-50 border-green-300 text-green-800' 
+                                                  : 'bg-white border-gray-200 text-text-muted'
+                                              }`}
+                                            >
+                                              <span className={`material-symbols-outlined text-[18px] ${opt.isCorrect ? 'text-green-600' : 'text-gray-400'}`}>
+                                                {opt.isCorrect ? 'check_circle' : 'radio_button_unchecked'}
+                                              </span>
+                                              <span className="text-xs font-semibold">{opt.content}</span>
+                                              {opt.isCorrect && (
+                                                <span className="ml-auto text-[10px] uppercase font-black bg-green-200 text-green-800 px-1.5 py-0.5 rounded">
+                                                  Correct Option
+                                                </span>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Tab removed */}
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -2415,53 +2399,64 @@ export const AdminDashboard: React.FC = () => {
                     </div>
 
                     <div className="divide-y divide-gray-150">
-                      {/* Dynamically generate sections based on totalChapters */}
-                      {Array.from({ length: Math.max(reviewingCourse.totalChapters, 1) }, (_, chIdx) => {
-                        const secKey = `sec${chIdx + 1}`;
-                        const chapterNames = [
-                          'Course Introduction', 'REST API & Controller', 'Spring Data JPA',
-                          'Service Layer & Business Logic', 'Security & Authentication',
-                          'Testing & Deployment', 'Advanced Topics', 'Capstone Project'
-                        ];
-                        const chapterName = chapterNames[chIdx] || `Chapter ${chIdx + 1}`;
-                        const lessonsPerChapter = Math.max(1, Math.round(reviewingCourse.totalLessons / Math.max(reviewingCourse.totalChapters, 1)));
+                      {reviewChapters.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-text-muted">No curriculum chapters available.</div>
+                      ) : (
+                        reviewChapters.map((chapter, chIdx) => {
+                          const secKey = `sec_${chapter.id}`;
+                          const isExpanded = !!reviewCurriculumSections[secKey];
+                          
+                          return (
+                            <div key={chapter.id} className="flex flex-col">
+                              <button
+                                onClick={() => setReviewCurriculumSections(prev => ({ ...prev, [secKey]: !prev[secKey] }))}
+                                className="w-full flex items-center justify-between p-3.5 hover:bg-surface-gray transition-colors text-left bg-white border-none cursor-pointer"
+                              >
+                                <span className="font-semibold text-xs text-text-main line-clamp-1">
+                                  {chIdx + 1}. {chapter.title}
+                                </span>
+                                <span className={`material-symbols-outlined text-text-muted text-[18px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>
+                                  expand_more
+                                </span>
+                              </button>
 
-                        return (
-                          <div key={secKey} className="flex flex-col">
-                            <button
-                              onClick={() => setReviewCurriculumSections(prev => ({ ...prev, [secKey]: !prev[secKey] }))}
-                              className="w-full flex items-center justify-between p-3.5 hover:bg-surface-gray transition-colors text-left bg-white border-none cursor-pointer"
-                            >
-                              <span className="font-semibold text-xs text-text-main line-clamp-1">{chIdx + 1}. {chapterName}</span>
-                              <span className={`material-symbols-outlined text-text-muted text-[18px] transition-transform duration-200 ${reviewCurriculumSections[secKey] ? 'rotate-180' : ''}`}>expand_more</span>
-                            </button>
-
-                            <div className={`${reviewCurriculumSections[secKey] ? 'flex' : 'hidden'} flex-col bg-slate-50`}>
-                              {Array.from({ length: lessonsPerChapter }, (_, lIdx) => {
-                                const lectureTitle = `${chIdx + 1}.${lIdx + 1} Lesson ${lIdx + 1}`;
-                                const isActive = reviewLectureTitle === lectureTitle;
-                                const duration = `${String(Math.floor(Math.random() * 20 + 5)).padStart(2, '0')}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}`;
-                                return (
-                                  <div
-                                    key={lIdx}
-                                    onClick={() => setReviewLectureTitle(lectureTitle)}
-                                    className={`flex items-center gap-2.5 px-4 py-2.5 cursor-pointer border-l-2 transition-colors group ${isActive
-                                      ? 'bg-primary-light/30 border-primary'
-                                      : 'hover:bg-slate-100 border-transparent'
-                                      }`}
-                                  >
-                                    <span className={`material-symbols-outlined text-[16px] ${isActive ? 'text-primary' : 'text-text-muted'}`}>
-                                      {isActive ? 'play_circle' : 'radio_button_unchecked'}
-                                    </span>
-                                    <span className={`text-xs flex-1 truncate ${isActive ? 'text-primary font-bold' : 'text-text-main group-hover:text-primary font-medium'}`}>{lectureTitle}</span>
-                                    <span className={`text-[10px] font-mono ${isActive ? 'text-primary/80' : 'text-text-muted'}`}>{duration}</span>
-                                  </div>
-                                );
-                              })}
+                              <div className={`${isExpanded ? 'flex' : 'hidden'} flex-col bg-slate-50`}>
+                                {chapter.lessons && chapter.lessons.length > 0 ? (
+                                  chapter.lessons.map((lesson: any, lIdx: number) => {
+                                    const lectureTitle = lesson.title;
+                                    const isActive = reviewSelectedLessonId === lesson.id;
+                                    const iconName = lesson.type === 'video' ? 'play_circle' : lesson.type === 'quiz' ? 'quiz' : 'description';
+                                    
+                                    return (
+                                      <div
+                                        key={lesson.id}
+                                        onClick={() => handleReviewSelectLesson(lesson.id, lesson.title)}
+                                        className={`flex items-center gap-2.5 px-4 py-2.5 cursor-pointer border-l-2 transition-colors group ${
+                                          isActive
+                                            ? 'bg-primary-light/30 border-primary'
+                                            : 'hover:bg-slate-100 border-transparent'
+                                        }`}
+                                      >
+                                        <span className={`material-symbols-outlined text-[16px] ${isActive ? 'text-primary' : 'text-text-muted'}`}>
+                                          {isActive ? 'play_circle' : iconName}
+                                        </span>
+                                        <span className={`text-xs flex-1 truncate ${isActive ? 'text-primary font-bold' : 'text-text-main group-hover:text-primary font-medium'}`}>
+                                          {chIdx + 1}.{lIdx + 1} {lectureTitle}
+                                        </span>
+                                        <span className={`text-[10px] font-mono capitalize ${isActive ? 'text-primary/80' : 'text-text-muted'}`}>
+                                          {lesson.type}
+                                        </span>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <div className="p-3 text-center text-[10px] text-text-muted italic">No lessons in this chapter.</div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2734,7 +2729,7 @@ export const AdminDashboard: React.FC = () => {
                                           onClick={() => {
                                             setReviewContestProblemId(cp.problemId);
                                             setContestSolveLang('Java');
-                                            setContestSolveCode(fullProblem?.starterTemplates?.['Java'] || problemData[cp.title]?.code?.['Java'] || JAVA_TEMPLATE);
+                                            setContestSolveCode(fullProblem?.starterTemplates?.['Java'] || JAVA_TEMPLATE);
                                           }}
                                           className="text-primary hover:underline font-bold text-left bg-transparent border-none cursor-pointer p-0"
                                         >
@@ -2885,7 +2880,11 @@ export const AdminDashboard: React.FC = () => {
                         difficulty: realProb.difficulty,
                         description: realProb.description,
                         code: realProb.starterTemplates || {}
-                      } : problemData[probName];
+                      } : {
+                        difficulty: 'EASY',
+                        description: '<p>No description available.</p>',
+                        code: {}
+                      };
                       const difficultyText = realProb ? (realProb.difficulty === 'EASY' ? 'Easy' : realProb.difficulty === 'MEDIUM' ? 'Medium' : 'Hard') : (reviewContestProblemId === 103 ? 'Medium' : 'Easy');
                       const difficultyClass = realProb 
                         ? (realProb.difficulty === 'EASY' ? 'bg-green-50 text-brand-green border border-green-200' 
@@ -3022,7 +3021,7 @@ export const AdminDashboard: React.FC = () => {
                                   onChange={(e) => {
                                     setContestSolveLang(e.target.value);
                                     const selectedLangName = e.target.value === 'Python 3' ? 'Python' : e.target.value;
-                                    const codeFromData = probDetail?.code?.[selectedLangName];
+                                    const codeFromData = (probDetail?.code as any)?.[selectedLangName];
                                     if (codeFromData) {
                                       setContestSolveCode(codeFromData);
                                     } else {
@@ -3052,7 +3051,7 @@ export const AdminDashboard: React.FC = () => {
                                 <button
                                   onClick={() => {
                                     const selectedLangName = contestSolveLang === 'Python 3' ? 'Python' : contestSolveLang;
-                                    const codeFromData = probDetail?.code?.[selectedLangName];
+                                    const codeFromData = (probDetail?.code as any)?.[selectedLangName];
                                     if (codeFromData) {
                                       setContestSolveCode(codeFromData);
                                     } else {
@@ -3155,7 +3154,7 @@ export const AdminDashboard: React.FC = () => {
                             contestSubmissions.map((sub) => (
                               <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
                                 <td className="px-6 py-4 text-slate-500 font-normal">{sub.submittedAt}</td>
-                                <td className="px-6 py-4 font-bold text-slate-900">@{sub.username}</td>
+                                <td className="px-6 py-4 font-bold text-slate-900">{sub.displayName || sub.username}</td>
                                 <td className="px-6 py-4 text-center">
                                   <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-800 font-bold border border-slate-200">{sub.problemLabel}</span>
                                 </td>
@@ -3408,22 +3407,22 @@ export const AdminDashboard: React.FC = () => {
                             <div className="p-6 border-b border-gray-200 bg-white">
                               <h2 className="text-lg font-bold text-text-main">Standings Scoreboard</h2>
                             </div>
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-left border-collapse">
+                            <div className="w-full overflow-hidden">
+                              <table className="w-full table-fixed text-left border-collapse">
                                 <thead>
-                                  <tr className="bg-slate-50 border-b border-gray-200 text-text-main font-semibold text-xs uppercase tracking-wider text-center">
-                                    <th className="p-3 w-12 text-center">Rank</th>
-                                    <th className="p-3 text-left">Team</th>
-                                    <th className="p-3 w-16 text-center">Solved</th>
-                                    <th className="p-3 w-24 text-center">Penalty</th>
+                                  <tr className="bg-slate-50 border-b border-gray-200 text-text-main font-semibold text-[10px] sm:text-xs uppercase tracking-wider text-center">
+                                    <th className="p-1 sm:p-2 w-8 sm:w-12 text-center border-r border-gray-200">#</th>
+                                    <th className="p-1 sm:p-2 w-1/4 text-left border-r border-gray-200 truncate">Team</th>
+                                    <th className="p-1 sm:p-2 w-10 sm:w-16 text-center border-r border-gray-200 whitespace-nowrap text-[9px] sm:text-[11px]">AC</th>
+                                    <th className="p-1 sm:p-2 w-12 sm:w-20 text-center border-r border-gray-200 text-[9px] sm:text-[11px]">Pen</th>
                                     {contestProblems.map((prob, idx) => (
-                                      <th key={prob.problemId} className="p-3 w-16 text-center">
+                                      <th key={prob.problemId} className="p-1 sm:p-2 text-center border-r border-gray-200 truncate" title={prob.title}>
                                         {String.fromCharCode(65 + idx)}
                                       </th>
                                     ))}
                                   </tr>
                                 </thead>
-                                <tbody className="text-xs font-semibold divide-y divide-gray-200">
+                                <tbody className="text-[10px] sm:text-xs font-semibold divide-y divide-gray-200">
                                   {rankingTeams.map((team) => {
                                     // Calculate penalty
                                     let penaltyMinutes = 0;
@@ -3437,33 +3436,33 @@ export const AdminDashboard: React.FC = () => {
 
                                     return (
                                       <tr key={team.name} className="hover:bg-slate-50/50 transition-colors">
-                                        <td className="p-3 text-center font-bold text-slate-900">{team.rank}</td>
-                                        <td className="p-3 text-left">
-                                          <div className="font-bold text-slate-900">@{team.name}</div>
-                                          <div className="text-[10px] text-slate-400 font-normal">{team.affiliation}</div>
+                                        <td className="p-1 sm:p-2 text-center font-bold text-slate-900 border-r border-gray-200">{team.rank}</td>
+                                        <td className="p-1 sm:p-2 text-left border-r border-gray-200 truncate">
+                                          <div className="font-bold text-slate-900 truncate">{team.displayName || team.name}</div>
+                                          <div className="text-[9px] sm:text-[10px] text-slate-400 font-normal truncate">{team.affiliation}</div>
                                         </td>
-                                        <td className="p-3 text-center font-bold text-slate-900 bg-slate-50/60">{team.solved}</td>
-                                        <td className="p-3 text-center font-mono text-slate-500 font-normal">{team.totalPenalty || penaltyMinutes} m</td>
+                                        <td className="p-1 sm:p-2 text-center font-bold text-slate-900 bg-slate-50/60 border-r border-gray-200">{team.solved}</td>
+                                        <td className="p-1 sm:p-2 text-center font-mono text-slate-500 font-normal border-r border-gray-200">{team.totalPenalty || penaltyMinutes}</td>
                                         {contestProblems.map((p, pIdx) => {
                                           const probCode = String.fromCharCode(65 + pIdx);
                                           const sub = team.submissions?.[probCode];
                                           if (!sub || sub.status === 'unattempted') {
-                                            return <td key={p.problemId} className="p-3 border border-white text-center bg-gray-50/50"></td>;
+                                            return <td key={p.problemId} className="p-1 sm:p-2 border border-white text-center bg-gray-50/50"></td>;
                                           }
                                           if (sub.status === 'failed') {
                                             return (
-                                              <td key={p.problemId} className="p-3 border border-white text-center bg-primary text-white">
+                                              <td key={p.problemId} className="p-1 sm:p-2 border border-white text-center bg-primary text-white">
                                                 --
-                                                <div className="text-[9px] font-normal text-white/80 font-mono">(-{sub.penalty})</div>
+                                                <div className="text-[8px] sm:text-[9px] font-normal text-white/80 font-mono">(-{sub.penalty})</div>
                                               </td>
                                             );
                                           }
                                           const penaltyText = sub.penalty > 0 ? `(-${sub.penalty})` : '';
                                           const bgClass = sub.status === 'first_solve' ? 'bg-brand-blue' : 'bg-brand-green';
                                           return (
-                                            <td key={p.problemId} className={`p-3 border border-white text-center text-white ${bgClass}`}>
+                                            <td key={p.problemId} className={`p-1 sm:p-2 border border-white text-center text-white ${bgClass}`}>
                                               {sub.time}
-                                              <div className="text-[9px] font-normal text-white/80 font-mono">{penaltyText}</div>
+                                              <div className="text-[8px] sm:text-[9px] font-normal text-white/80 font-mono">{penaltyText}</div>
                                             </td>
                                           );
                                         })}
@@ -3548,8 +3547,17 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* TAB: DASHBOARD */}
-            {activeTab === 'dashboard' && (
+            {loading ? (
+              <div className="flex-grow flex items-center justify-center min-h-[400px]">
+                <div className="flex flex-col items-center gap-3">
+                  <span className="animate-spin material-symbols-outlined text-4xl text-primary">sync</span>
+                  <p className="text-sm text-text-muted font-bold">Synchronizing Admin Panel Data...</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* TAB: DASHBOARD */}
+                {activeTab === 'dashboard' && (
               <div className="flex flex-col gap-8">
                 {/* Stats cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
@@ -3614,7 +3622,13 @@ export const AdminDashboard: React.FC = () => {
                     </div>
 
                     <div className="w-full h-[220px] select-none mt-2">
-                      <svg viewBox={`0 0 ${lineChartPoints.width} ${lineChartPoints.height}`} className="w-full h-full overflow-visible">
+                      {lineChartPoints.points.length === 0 ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                          <span className="material-symbols-outlined text-4xl text-slate-300 mb-2">monitoring</span>
+                          <span className="text-sm font-bold text-slate-400">No Data Available</span>
+                        </div>
+                      ) : (
+                        <svg viewBox={`0 0 ${lineChartPoints.width} ${lineChartPoints.height}`} className="w-full h-full overflow-visible">
                         <linearGradient id="admin-revenue-grad" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#F36F21" stopOpacity="0.25" />
                           <stop offset="100%" stopColor="#F36F21" stopOpacity="0" />
@@ -3664,6 +3678,7 @@ export const AdminDashboard: React.FC = () => {
                           <text key={idx} x={lineChartPoints.points[idx].x} y={lineChartPoints.height - 8} fill="#64748b" fontSize="9" fontWeight="700" textAnchor="middle">{m.label}</text>
                         ))}
                       </svg>
+                      )}
                     </div>
                   </div>
 
@@ -3943,8 +3958,8 @@ export const AdminDashboard: React.FC = () => {
                         <span className="material-symbols-outlined text-primary">payments</span> User Deposit History
                       </h3>
                       <button 
-                        onClick={handleOpenAllDeposits}
-                        className="text-xs font-bold text-primary hover:text-brand-blue transition-colors flex items-center gap-1 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-full"
+                        onClick={() => setActiveFinancialModal('deposits')}
+                        className="text-xs font-bold text-primary hover:text-brand-blue transition-colors flex items-center gap-1 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-full cursor-pointer"
                       >
                         View All <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
                       </button>
@@ -3989,8 +4004,8 @@ export const AdminDashboard: React.FC = () => {
 
                       {/* Course Approvals quick preview */}
                       <div className="flex flex-col gap-3">
-                        <h4 className="text-xs font-black text-text-muted uppercase tracking-wider">Pending Courses ({courses.filter(c => c.status === 'PENDING').length})</h4>
-                        {courses.filter(c => c.status === 'PENDING').slice(0, 2).map((c) => (
+                        <h4 className="text-xs font-black text-text-muted uppercase tracking-wider">Pending Courses ({courses.filter(c => c.status === 'PENDING_ADMIN').length})</h4>
+                        {courses.filter(c => c.status === 'PENDING_ADMIN').slice(0, 2).map((c) => (
                           <div key={c.id} className="flex items-center justify-between bg-slate-50/50 border border-slate-100 p-3 rounded-xl">
                             <div className="min-w-0">
                               <p className="text-xs font-bold text-text-main truncate">{c.title}</p>
@@ -4004,7 +4019,7 @@ export const AdminDashboard: React.FC = () => {
                             </button>
                           </div>
                         ))}
-                        {courses.filter(c => c.status === 'PENDING').length === 0 && (
+                        {courses.filter(c => c.status === 'PENDING_ADMIN').length === 0 && (
                           <p className="text-xs text-text-muted italic">No pending course registrations.</p>
                         )}
 
@@ -4020,10 +4035,20 @@ export const AdminDashboard: React.FC = () => {
             {activeTab === 'courses' && (
               <div className="flex flex-col gap-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <h2 className="text-2xl font-display font-black text-brand-blue">Platform Courses Management</h2>
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-2xl font-display font-black text-brand-blue">Platform Courses Management</h2>
+                    <button
+                      onClick={loadData}
+                      disabled={loading}
+                      title="Refresh course list"
+                      className="flex items-center justify-center p-1.5 rounded-xl border border-slate-200 bg-surface text-slate-500 hover:text-primary hover:border-primary/50 active:scale-95 transition-all shrink-0 shadow-sm"
+                    >
+                      <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>refresh</span>
+                    </button>
+                  </div>
                   {/* Status Filters */}
                   <div className="flex gap-2">
-                    {['ALL', 'APPROVED', 'PENDING', 'REJECTED'].map((filterVal) => (
+                    {['APPROVED', 'PENDING_ADMIN', 'PENDING_AI', 'REJECTED'].map((filterVal) => (
                       <button
                         key={filterVal}
                         onClick={() => setCourseFilter(filterVal as any)}
@@ -4045,8 +4070,9 @@ export const AdminDashboard: React.FC = () => {
                         <img src={c.thumbnailUrl} alt={c.title} className="w-full h-40 object-cover border-b border-slate-100" />
                         <div className="p-5 flex flex-col gap-2">
                           <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md self-start ${c.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-600' :
-                            c.status === 'PENDING' ? 'bg-orange-50 text-orange-500' : 'bg-red-50 text-red-500'
-                            }`}>{c.status}</span>
+                            c.status === 'PENDING_ADMIN' ? 'bg-orange-50 text-orange-500' : 
+                            c.status === 'PENDING_AI' ? 'bg-blue-50 text-blue-500' : 'bg-red-50 text-red-500'
+                            }`}>{c.status === 'PENDING_ADMIN' ? 'WAITING ADMIN' : c.status === 'PENDING_AI' ? 'AI MODERATING' : c.status}</span>
                           <h3 className="font-display font-bold text-base text-brand-blue truncate mt-1">{c.title}</h3>
                           <p className="text-xs text-text-muted line-clamp-2">{c.shortDescription}</p>
                           <div className="flex items-center gap-2 mt-1">
@@ -4079,13 +4105,17 @@ export const AdminDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      {c.status === 'PENDING' && (
+                      {(c.status === 'PENDING_ADMIN' || c.status === 'REJECTED') && (
                         <div className="p-5 pt-0 border-t border-slate-50 mt-2 flex gap-2">
                           <button
                             onClick={() => handleReviewCourse(c)}
-                            className="flex-1 text-xs bg-primary hover:bg-primary-hover text-white font-bold py-2 rounded-xl transition-all"
+                            className={`flex-1 text-xs text-white font-bold py-2 rounded-xl transition-all ${
+                              c.status === 'REJECTED' 
+                                ? 'bg-rose-500 hover:bg-rose-600' 
+                                : 'bg-primary hover:bg-primary-hover'
+                            }`}
                           >
-                            Review & Approve
+                            {c.status === 'REJECTED' ? 'View Moderation Report' : 'Review & Approve'}
                           </button>
                         </div>
                       )}
@@ -4197,31 +4227,94 @@ export const AdminDashboard: React.FC = () => {
                 </div>
 
                 {/* Problems List Table */}
+                {selectedProblems.length > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between mb-4 shadow-sm animate-fade-in-up">
+                    <div className="flex items-center gap-2 text-blue-700 font-bold text-sm">
+                      <span className="material-symbols-outlined">check_box</span>
+                      <span>{selectedProblems.length} problem{selectedProblems.length > 1 ? 's' : ''} selected</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => triggerConfirm("Bulk Publish", `Publish ${selectedProblems.length} selected problems?`, () => {
+                          Promise.all(selectedProblems.map(id => adminService.updateProblemPublicStatus(id, true))).then(() => {
+                            showGlobalToast(`Published ${selectedProblems.length} problems`, "success");
+                            setSelectedProblems([]);
+                            loadData();
+                          }).catch(() => showGlobalToast("Failed to publish some problems", "error"));
+                        })}
+                        className="bg-white border border-blue-200 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">public</span> Publish
+                      </button>
+                      <button 
+                        onClick={() => triggerConfirm("Bulk Hide", `Make ${selectedProblems.length} selected problems private?`, () => {
+                          Promise.all(selectedProblems.map(id => adminService.updateProblemPublicStatus(id, false))).then(() => {
+                            showGlobalToast(`Made ${selectedProblems.length} problems private`, "success");
+                            setSelectedProblems([]);
+                            loadData();
+                          }).catch(() => showGlobalToast("Failed to hide some problems", "error"));
+                        })}
+                        className="bg-white border border-blue-200 text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">visibility_off</span> Private
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="bg-surface rounded-2xl border border-slate-200/50 overflow-hidden ambient-shadow">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50 text-xs font-black text-text-muted border-b border-slate-100 uppercase tracking-wider">
+                          <th className="py-4 px-6 w-12 text-center">
+                            <input 
+                              type="checkbox" 
+                              className="w-4 h-4 rounded text-brand-blue border-slate-300 focus:ring-brand-blue"
+                              checked={paginatedProblems.length > 0 && selectedProblems.length === paginatedProblems.length}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedProblems(paginatedProblems.map(p => p.id));
+                                } else {
+                                  setSelectedProblems([]);
+                                }
+                              }}
+                            />
+                          </th>
                           <th className="py-4 px-6">ID</th>
                           <th className="py-4 px-6">Title</th>
                           <th className="py-4 px-6">Difficulty</th>
                           <th className="py-4 px-6 text-right">Submissions</th>
                           <th className="py-4 px-6 text-right">Accepted Rate</th>
+                          <th className="py-4 px-6 text-center">Testcases</th>
                           <th className="py-4 px-6 text-center">Scope</th>
                           <th className="py-4 px-6 text-center">Status</th>
                           <th className="py-4 px-6 text-center">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="text-xs font-semibold text-slate-700 divide-y divide-slate-100">
-                        {filteredProblems.map((p, index) => {
+                        {paginatedProblems.map((p, index) => {
                           const totalSubs = p.totalSubmissions || 0;
                           const acceptedSubs = p.acceptedSubmissions || 0;
                           const calculatedRate = totalSubs > 0 ? (acceptedSubs / totalSubs * 100) : 0;
                           const acceptedRate = Math.min(calculatedRate, 100).toFixed(1);
 
                           return (
-                            <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="py-4 px-6 text-brand-blue font-bold">#{index + 1}</td>
+                            <tr key={p.id} className={`hover:bg-slate-50/50 transition-colors ${selectedProblems.includes(p.id) ? 'bg-blue-50/30' : ''}`}>
+                              <td className="py-4 px-6 text-center">
+                                <input 
+                                  type="checkbox" 
+                                  className="w-4 h-4 rounded text-brand-blue border-slate-300 focus:ring-brand-blue"
+                                  checked={selectedProblems.includes(p.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedProblems(prev => [...prev, p.id]);
+                                    } else {
+                                      setSelectedProblems(prev => prev.filter(id => id !== p.id));
+                                    }
+                                  }}
+                                />
+                              </td>
+                              <td className="py-4 px-6 text-brand-blue font-bold">#{p.id}</td>
                               <td className="py-4 px-6 font-bold text-slate-900">{p.title}</td>
                               <td className="py-4 px-6">
                                 <span className={`px-2.5 py-0.5 rounded-md font-bold text-[10px] ${p.difficulty === 'EASY' ? 'bg-emerald-50 text-emerald-600' :
@@ -4243,9 +4336,21 @@ export const AdminDashboard: React.FC = () => {
                                 </div>
                               </td>
                               <td className="py-4 px-6 text-center">
+                                <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold border border-slate-200">
+                                  {p.totalTestcases || 0}
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-center">
                                 <select
                                   value={p.problemScope}
-                                  onChange={(e) => handleUpdateProblemScope(p.id, e.target.value as any)}
+                                  onChange={(e) => {
+                                    const newScope = e.target.value as any;
+                                    triggerConfirm(
+                                      "Change Problem Scope",
+                                      `Are you sure you want to change the scope to ${newScope}?`,
+                                      () => handleUpdateProblemScope(p.id, newScope)
+                                    );
+                                  }}
                                   className={`border rounded-lg pl-2.5 pr-8 py-1 text-xs font-bold focus:ring-0 outline-none cursor-pointer ${p.problemScope === 'PRACTICE'
                                     ? 'bg-green-50 text-green-600 border-green-200'
                                     : p.problemScope === 'CONTEST'
@@ -4261,7 +4366,14 @@ export const AdminDashboard: React.FC = () => {
                               <td className="py-4 px-6 text-center">
                                 <select
                                   value={p.isPublic ? "PUBLIC" : "PRIVATE"}
-                                  onChange={(e) => handleUpdateProblemPublicStatus(p.id, e.target.value === "PUBLIC")}
+                                  onChange={(e) => {
+                                    const isPublic = e.target.value === "PUBLIC";
+                                    triggerConfirm(
+                                      "Change Publish Status",
+                                      `Are you sure you want to make this problem ${isPublic ? "public" : "private"}?`,
+                                      () => handleUpdateProblemPublicStatus(p.id, isPublic)
+                                    );
+                                  }}
                                   className={`border rounded-lg pl-2.5 pr-8 py-1 text-xs font-bold outline-none cursor-pointer ${p.isPublic
                                     ? "bg-emerald-50 border-emerald-250 text-emerald-600"
                                     : "bg-slate-100 border-slate-200 text-slate-600"
@@ -4290,14 +4402,63 @@ export const AdminDashboard: React.FC = () => {
                             </tr>
                           );
                         })}
-                        {filteredProblems.length === 0 && (
+                        {paginatedProblems.length === 0 && (
                           <tr>
-                            <td colSpan={8} className="py-12 text-center text-text-muted italic">No problems found.</td>
+                            <td colSpan={10} className="py-12 text-center text-text-muted italic">No problems found.</td>
                           </tr>
                         )}
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Pagination Controls */}
+                  {totalProblemPages > 1 && (
+                    <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50">
+                      <span className="text-xs font-semibold text-slate-500">
+                        Showing {(safeProblemPage - 1) * problemsPerPage + 1} to {Math.min(safeProblemPage * problemsPerPage, filteredProblems.length)} of {filteredProblems.length} entries
+                      </span>
+                      <div className="flex gap-1">
+                        <button 
+                          onClick={() => setProblemPage(p => Math.max(1, p - 1))}
+                          disabled={safeProblemPage === 1}
+                          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-white disabled:opacity-50 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                        </button>
+                        
+                        <div className="flex gap-1">
+                          {Array.from({ length: Math.min(5, totalProblemPages) }).map((_, i) => {
+                            let pageNum = i + 1;
+                            if (totalProblemPages > 5) {
+                              if (safeProblemPage > 3) pageNum = safeProblemPage - 2 + i;
+                              if (pageNum > totalProblemPages) pageNum = totalProblemPages - (4 - i);
+                            }
+                            return (
+                              <button
+                                key={pageNum}
+                                onClick={() => setProblemPage(pageNum)}
+                                className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
+                                  safeProblemPage === pageNum 
+                                    ? 'bg-brand-blue text-white shadow-sm' 
+                                    : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        
+                        <button 
+                          onClick={() => setProblemPage(p => Math.min(totalProblemPages, p + 1))}
+                          disabled={safeProblemPage === totalProblemPages}
+                          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-white disabled:opacity-50 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -4691,10 +4852,10 @@ export const AdminDashboard: React.FC = () => {
                     {/* Preset buttons */}
                     <div className="flex bg-slate-100 p-1 rounded-xl gap-0.5">
                       {[
-                        { val: 'month', label: 'Tháng này' },
-                        { val: '3months', label: '3 tháng' },
-                        { val: '9months', label: '9 tháng' },
-                        { val: '12months', label: '12 tháng' }
+                        { val: 'month', label: 'This Month' },
+                        { val: '3months', label: '3 Months' },
+                        { val: '9months', label: '9 Months' },
+                        { val: '12months', label: '12 Months' }
                       ].map(p => (
                         <button
                           key={p.val}
@@ -4727,7 +4888,7 @@ export const AdminDashboard: React.FC = () => {
                             setFinancialTimeFilter('custom');
                           }}
                           className="bg-transparent text-xs font-bold text-slate-700 outline-none border-none p-0 focus:ring-0 w-28"
-                          placeholder="Từ ngày"
+                          placeholder="Start date"
                         />
                       </div>
                       <span className="text-xs text-slate-400 font-bold">to</span>
@@ -4741,7 +4902,7 @@ export const AdminDashboard: React.FC = () => {
                             setFinancialTimeFilter('custom');
                           }}
                           className="bg-transparent text-xs font-bold text-slate-700 outline-none border-none p-0 focus:ring-0 w-28"
-                          placeholder="Đến ngày"
+                          placeholder="End date"
                         />
                       </div>
                     </div>
@@ -4779,8 +4940,8 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <div className="flex justify-between items-center mt-4 border-t border-slate-50 pt-2">
                       <span className="text-[10px] text-slate-400 font-semibold">Total sales volume generated</span>
-                      <button onClick={() => setActiveFinancialModal('gross')} className="text-[10px] text-blue-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
-                        Xem tất cả <span className="material-symbols-outlined text-xs">arrow_forward</span>
+                      <button onClick={() => navigate('/admin/financial-reports', { state: { tab: 'gross' } })} className="text-[10px] text-blue-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
+                        View All <span className="material-symbols-outlined text-xs">arrow_forward</span>
                       </button>
                     </div>
                   </div>
@@ -4799,8 +4960,8 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <div className="flex justify-between items-center mt-4 border-t border-slate-50 pt-2">
                       <span className="text-[10px] text-slate-400 font-semibold">70% split allocated to lecturers</span>
-                      <button onClick={() => setActiveFinancialModal('instructor')} className="text-[10px] text-violet-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
-                        Xem tất cả <span className="material-symbols-outlined text-xs">arrow_forward</span>
+                      <button onClick={() => navigate('/admin/financial-reports', { state: { tab: 'instructor' } })} className="text-[10px] text-violet-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
+                        View All <span className="material-symbols-outlined text-xs">arrow_forward</span>
                       </button>
                     </div>
                   </div>
@@ -4819,8 +4980,8 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <div className="flex justify-between items-center mt-4 border-t border-slate-50 pt-2">
                       <span className="text-[10px] text-slate-400 font-semibold">System shares from courses</span>
-                      <button onClick={() => setActiveFinancialModal('platform')} className="text-[10px] text-indigo-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
-                        Xem tất cả <span className="material-symbols-outlined text-xs">arrow_forward</span>
+                      <button onClick={() => navigate('/admin/financial-reports', { state: { tab: 'platform' } })} className="text-[10px] text-indigo-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
+                        View All <span className="material-symbols-outlined text-xs">arrow_forward</span>
                       </button>
                     </div>
                   </div>
@@ -4839,8 +5000,8 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <div className="flex justify-between items-center mt-4 border-t border-slate-50 pt-2">
                       <span className="text-[10px] text-slate-400 font-semibold">Total cash rewarded to top users</span>
-                      <button onClick={() => setActiveFinancialModal('awards')} className="text-[10px] text-rose-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
-                        Xem tất cả <span className="material-symbols-outlined text-xs">arrow_forward</span>
+                      <button onClick={() => navigate('/admin/financial-reports', { state: { tab: 'awards' } })} className="text-[10px] text-rose-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
+                        View All <span className="material-symbols-outlined text-xs">arrow_forward</span>
                       </button>
                     </div>
                   </div>
@@ -4861,8 +5022,8 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <div className="flex justify-between items-center mt-4 border-t border-slate-50 pt-2">
                       <span className="text-[10px] text-slate-400 font-semibold">Platform Share after expenses</span>
-                      <button onClick={() => setActiveFinancialModal('profit')} className="text-[10px] text-emerald-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
-                        Xem tất cả <span className="material-symbols-outlined text-xs">arrow_forward</span>
+                      <button onClick={() => navigate('/admin/financial-reports', { state: { tab: 'profit' } })} className="text-[10px] text-emerald-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
+                        View All <span className="material-symbols-outlined text-xs">arrow_forward</span>
                       </button>
                     </div>
                   </div>
@@ -4881,8 +5042,8 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <div className="flex justify-between items-center mt-4 border-t border-slate-50 pt-2">
                       <span className="text-[10px] text-slate-400 font-semibold">Total purchased copies count</span>
-                      <button onClick={() => setActiveFinancialModal('sales')} className="text-[10px] text-amber-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
-                        Xem tất cả <span className="material-symbols-outlined text-xs">arrow_forward</span>
+                      <button onClick={() => navigate('/admin/financial-reports', { state: { tab: 'sales' } })} className="text-[10px] text-amber-500 font-black hover:underline flex items-center gap-0.5 transition-colors">
+                        View All <span className="material-symbols-outlined text-xs">arrow_forward</span>
                       </button>
                     </div>
                   </div>
@@ -5105,8 +5266,8 @@ export const AdminDashboard: React.FC = () => {
                       </h3>
                       <p className="text-xs text-text-muted mt-0.5">Highest earning syllabus offerings and division statistics.</p>
                     </div>
-                    <button onClick={() => setActiveFinancialModal('courses-sold-all')} className="text-xs text-blue-500 font-black hover:underline flex items-center gap-0.5 transition-colors border border-blue-100 hover:bg-blue-50/50 px-3 py-1.5 rounded-xl">
-                      Xem tất cả <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                    <button onClick={() => navigate('/admin/financial-reports', { state: { tab: 'course-stats' } })} className="text-xs text-blue-500 font-black hover:underline flex items-center gap-0.5 transition-colors border border-blue-100 hover:bg-blue-50/50 px-3 py-1.5 rounded-xl cursor-pointer">
+                      View All <span className="material-symbols-outlined text-sm">arrow_forward</span>
                     </button>
                   </div>
 
@@ -5141,11 +5302,80 @@ export const AdminDashboard: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
-                </div>              </div>
+                </div>
+                
+                {/* Table: Recent Instructor Payouts */}
+                <div className="w-full bg-white rounded-2xl p-6 border border-slate-200/50 shadow-sm flex flex-col justify-between mt-6">
+                  <div className="flex justify-between items-center pb-4 border-b border-slate-100">
+                    <div>
+                      <h3 className="font-display font-black text-lg text-slate-800 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-emerald-500">account_balance</span> Recent Instructor Payouts
+                      </h3>
+                      <p className="text-xs text-text-muted mt-1">Latest automated money transfers to instructors.</p>
+                    </div>
+                    <button
+                      onClick={() => navigate('/admin/financial-reports', { state: { tab: 'payouts' } })}
+                      className="text-xs font-bold text-emerald-600 hover:text-emerald-700 transition-colors flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-full"
+                    >
+                      View All <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                    </button>
+                  </div>
+                  
+                  <div className="overflow-x-auto mt-4">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-[10px] font-black text-slate-500 border-b border-slate-100 uppercase tracking-wider">
+                          <th className="p-3">Transaction ID</th>
+                          <th className="p-3">Instructor</th>
+                          <th className="p-3">Bank Account</th>
+                          <th className="p-3">Status</th>
+                          <th className="p-3 text-right">Amount Transferred</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                        {recentPayouts.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="p-8 text-center text-slate-400 italic font-medium">No recent payout records found.</td>
+                          </tr>
+                        ) : (
+                          recentPayouts.map((p, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="p-3 font-mono text-[11px] text-slate-400">{p.id}</td>
+                              <td className="p-3">
+                                <div className="flex flex-col">
+                                  <span className="text-slate-900 font-bold text-sm">{p.instructorName}</span>
+                                  <span className="text-xs text-slate-500 font-medium">{p.instructorEmail}</span>
+                                </div>
+                              </td>
+                              <td className="p-3 font-mono text-sm text-slate-600">{p.bankAccount}</td>
+                              <td className="p-3">
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black tracking-wider ${
+                                  p.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-600' :
+                                  p.status === 'PENDING' ? 'bg-orange-100 text-orange-600' :
+                                  'bg-red-100 text-red-600'
+                                }`}>
+                                  {p.status}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right font-mono font-bold text-[#10B981]">-{p.amount.toLocaleString()} ₫</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+              </div>
+            )}
+              </>
             )}
           </main>
         )}
       </div>
+
+
+
 
 
 
@@ -5730,16 +5960,12 @@ export const AdminDashboard: React.FC = () => {
             <div className="flex justify-between items-center pb-4 border-b border-slate-100">
               <div>
                 <span className="text-[10px] font-black uppercase tracking-wider text-brand-blue bg-blue-50 px-2.5 py-1 rounded-md">
-                  Báo cáo chi tiết tài chính
+                  Detailed Financial Report
                 </span>
                 <h3 className="font-display font-black text-xl text-brand-blue mt-1.5">
-                  {activeFinancialModal === 'gross' && 'Chi tiết doanh thu gộp (Gross Revenue)'}
-                  {activeFinancialModal === 'instructor' && 'Chi tiết chia sẻ doanh thu Giảng viên (Instructor Share - 70%)'}
-                  {activeFinancialModal === 'platform' && 'Chi tiết chia sẻ doanh thu Nền tảng (Platform Cut - 30%)'}
-                  {activeFinancialModal === 'awards' && 'Chi tiết tiền thưởng giải đấu (Contest Prizes)'}
-                  {activeFinancialModal === 'profit' && 'Báo cáo lợi nhuận toàn diện (Comprehensive Profit Report)'}
-                  {activeFinancialModal === 'sales' && 'Danh sách chi tiết các lượt bán khóa học (Course Sales)'}
-                  {activeFinancialModal === 'courses-sold-all' && 'Báo cáo xếp hạng doanh thu tất cả khóa học'}
+                  {activeFinancialModal === 'profit' && 'Comprehensive Profit Report'}
+                  {activeFinancialModal === 'deposits' && 'All User Deposits Report'}
+                  {activeFinancialModal === 'courses-sold-all' && 'All Courses Revenue Ranking Report'}
                 </h3>
               </div>
               <button
@@ -5751,95 +5977,36 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             <div className="overflow-y-auto my-4 flex-1 pr-1 text-xs">
-              {/* Case 1: Gross / Instructor / Platform (Orders detail list) */}
-              {(activeFinancialModal === 'gross' || activeFinancialModal === 'instructor' || activeFinancialModal === 'platform') && (
-                <div className="flex flex-col gap-4">
-                  <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                    <span className="font-semibold text-slate-500">Tổng quan toàn bộ thời gian:</span>
-                    <span className="font-mono font-black text-sm text-slate-900">
-                      {activeFinancialModal === 'gross' && `Gross: ${((financialDetails?.orders || []).reduce((acc: number, o: OrderDetails) => acc + o.grossAmount, 0)).toLocaleString()} ₫`}
-                      {activeFinancialModal === 'instructor' && `Instructor Share (70%): ${((financialDetails?.orders || []).reduce((acc: number, o: OrderDetails) => acc + o.instructorShare, 0)).toLocaleString()} ₫`}
-                      {activeFinancialModal === 'platform' && `Platform Cut (30%): ${((financialDetails?.orders || []).reduce((acc: number, o: OrderDetails) => acc + o.platformCut, 0)).toLocaleString()} ₫`}
-                    </span>
-                  </div>
+              {/* Note: Modals for orders, awards, and sales have been migrated to AdminFinancialReports.tsx */}
 
+              {/* Note: Modals for courses sold all has been migrated to AdminFinancialReports.tsx */}
+
+              {activeFinancialModal === 'deposits' && (
+                <div className="flex flex-col gap-4">
                   <div className="overflow-x-auto border border-slate-100 rounded-xl">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50 text-[10px] font-black text-slate-500 border-b border-slate-100 uppercase tracking-wider">
-                          <th className="p-3">Mã đơn</th>
-                          <th className="p-3">Học viên</th>
-                          <th className="p-3">Khóa học</th>
-                          <th className="p-3 text-right">Doanh thu gộp</th>
-                          <th className="p-3 text-right">Giảng viên (70%)</th>
-                          <th className="p-3 text-right">Platform (30%)</th>
-                          <th className="p-3">Ngày giao dịch</th>
+                          <th className="p-3">User Name</th>
+                          <th className="p-3 text-right">Deposit Amount</th>
+                          <th className="p-3">Date</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {(financialDetails?.orders || []).length === 0 ? (
+                        {recentDeposits.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="p-4 text-center text-slate-400 italic">Chưa có giao dịch nào được ghi nhận.</td>
+                            <td colSpan={3} className="p-8 text-center text-slate-400 italic font-medium">No deposit records found.</td>
                           </tr>
                         ) : (
-                          (financialDetails?.orders || []).map((o: OrderDetails, idx: number) => (
-                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-3 text-slate-900 font-bold">#{o.id}</td>
-                              <td className="p-3">
-                                <div>{o.customerName}</div>
-                                <div className="text-[10px] text-slate-400 font-medium">{o.customerEmail}</div>
+                          recentDeposits.map((dep) => (
+                            <tr key={dep.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="p-3 font-bold text-slate-900">{dep.userName}</td>
+                              <td className="p-3 text-right font-bold text-[#10B981]">
+                                {dep.amount.toLocaleString('vi-VN')} ₫
                               </td>
-                              <td className="p-3 max-w-[200px] truncate" title={o.courses}>{o.courses}</td>
-                              <td className="p-3 text-right font-mono text-slate-900 font-bold">{o.grossAmount.toLocaleString()} ₫</td>
-                              <td className="p-3 text-right font-mono text-violet-600">+{o.instructorShare.toLocaleString()} ₫</td>
-                              <td className="p-3 text-right font-mono text-indigo-600">+{o.platformCut.toLocaleString()} ₫</td>
-                              <td className="p-3 text-slate-400 font-medium">{new Date(o.date).toLocaleString()}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Case 2: Awards details list */}
-              {activeFinancialModal === 'awards' && (
-                <div className="flex flex-col gap-4">
-                  <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                    <span className="font-semibold text-slate-500">Tổng phần thưởng giải đấu toàn thời gian:</span>
-                    <span className="font-mono font-black text-sm text-rose-600">
-                      -{((financialDetails?.awards || []).reduce((acc: number, a: AwardDetails) => acc + a.amount, 0)).toLocaleString()} ₫
-                    </span>
-                  </div>
-
-                  <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 text-[10px] font-black text-slate-500 border-b border-slate-100 uppercase tracking-wider">
-                          <th className="p-3">Mã GD</th>
-                          <th className="p-3">Tài khoản nhận giải</th>
-                          <th className="p-3 text-right">Tiền thưởng</th>
-                          <th className="p-3">Nội dung giải thưởng</th>
-                          <th className="p-3">Thời gian</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {(financialDetails?.awards || []).length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="p-4 text-center text-slate-400 italic">Chưa có phần thưởng giải đấu nào được trao.</td>
-                          </tr>
-                        ) : (
-                          (financialDetails?.awards || []).map((a: AwardDetails, idx: number) => (
-                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-3 text-slate-900 font-bold">#{a.id}</td>
-                              <td className="p-3">
-                                <div>{a.userName}</div>
-                                <div className="text-[10px] text-slate-400 font-medium">{a.userEmail}</div>
+                              <td className="p-3 text-slate-500 font-medium">
+                                {new Date(dep.date).toLocaleString()}
                               </td>
-                              <td className="p-3 text-right font-mono text-rose-600 font-bold">-{a.amount.toLocaleString()} ₫</td>
-                              <td className="p-3 font-medium text-slate-600">{a.referenceId || 'Giải thưởng cuộc thi lập trình'}</td>
-                              <td className="p-3 text-slate-400 font-medium">{new Date(a.date).toLocaleString()}</td>
                             </tr>
                           ))
                         )}
@@ -5849,93 +6016,6 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               )}
 
-              {/* Case 3: Courses Sold sales list (order items detail) */}
-              {activeFinancialModal === 'sales' && (
-                <div className="flex flex-col gap-4">
-                  <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                    <span className="font-semibold text-slate-500">Tổng số lượng bản copy đã bán toàn thời gian:</span>
-                    <span className="font-black text-sm text-slate-900">
-                      {(financialDetails?.sales || []).length} copies
-                    </span>
-                  </div>
-
-                  <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 text-[10px] font-black text-slate-500 border-b border-slate-100 uppercase tracking-wider">
-                          <th className="p-3">Mã đơn</th>
-                          <th className="p-3">Học viên</th>
-                          <th className="p-3">Khóa học</th>
-                          <th className="p-3">Giảng viên</th>
-                          <th className="p-3 text-right">Giá bán</th>
-                          <th className="p-3">Ngày bán</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {(financialDetails?.sales || []).length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="p-4 text-center text-slate-400 italic">Chưa có lượt bán khóa học nào.</td>
-                          </tr>
-                        ) : (
-                          (financialDetails?.sales || []).map((s: SaleDetails, idx: number) => (
-                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-3 text-slate-900 font-bold">#{s.orderId}</td>
-                              <td className="p-3">{s.customerName}</td>
-                              <td className="p-3 max-w-[200px] truncate" title={s.courseTitle}>{s.courseTitle}</td>
-                              <td className="p-3 text-slate-500 font-extrabold">{s.instructorName}</td>
-                              <td className="p-3 text-right font-mono text-slate-900 font-bold">{s.price.toLocaleString()} ₫</td>
-                              <td className="p-3 text-slate-400 font-medium">{new Date(s.date).toLocaleString()}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Case 4: courses-sold-all - Top Revenue Generating Courses full list */}
-              {activeFinancialModal === 'courses-sold-all' && (
-                <div className="flex flex-col gap-4">
-                  <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 text-[10px] font-black text-slate-500 border-b border-slate-100 uppercase tracking-wider">
-                          <th className="p-3">Tên khóa học</th>
-                          <th className="p-3">Giảng viên</th>
-                          <th className="p-3 text-center">Bản đã bán</th>
-                          <th className="p-3 text-right">Doanh thu gộp</th>
-                          <th className="p-3 text-right">Giảng viên (70%)</th>
-                          <th className="p-3 text-right">Platform (30%)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {(topCourses || []).length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="p-4 text-center text-slate-400 italic">Chưa có dữ liệu doanh thu khóa học.</td>
-                          </tr>
-                        ) : (
-                          (topCourses || []).map((c, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-3 text-slate-900 font-bold">{c.name}</td>
-                              <td className="p-3 text-slate-500 font-extrabold">{c.tutor}</td>
-                              <td className="p-3 text-center font-mono font-bold">{c.sold}</td>
-                              <td className="p-3 text-right font-mono font-bold text-slate-900">{c.gross.toLocaleString()} ₫</td>
-                              <td className="p-3 text-right font-mono text-violet-600">+{c.payout.toLocaleString()} ₫</td>
-                              <td className="p-3 text-right font-mono text-indigo-600">+{c.plat.toLocaleString()} ₫</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Case 5: profit - Comprehensive Financial Report (All time, by year) */}
-              {activeFinancialModal === 'profit' && (
-                <FinancialAllTimeReport details={financialDetails} />
-              )}
             </div>
 
             <div className="flex justify-end pt-4 border-t border-slate-100">
@@ -5943,7 +6023,7 @@ export const AdminDashboard: React.FC = () => {
                 onClick={() => setActiveFinancialModal(null)}
                 className="bg-slate-100 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-200 transition-colors cursor-pointer"
               >
-                Đóng báo cáo
+                Close Report
               </button>
             </div>
           </div>
@@ -6025,12 +6105,14 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL: View All Deposits */}
-      {showAllDepositsModal && (
+
+
+      {/* MODAL: View AI Audit Report */}
+      {isAiReportModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div 
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in"
-            onClick={handleCloseAllDeposits}
+            onClick={() => setIsAiReportModalOpen(false)}
           ></div>
           
           <div className="bg-surface w-full max-w-4xl max-h-[85vh] rounded-3xl shadow-2xl relative z-[101] animate-scale-in flex flex-col overflow-hidden border border-slate-200/50">
@@ -6038,13 +6120,13 @@ export const AdminDashboard: React.FC = () => {
             <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-white">
               <div>
                 <h3 className="text-xl font-display font-black text-brand-blue flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-2xl">receipt_long</span> 
-                  All Deposit History
+                  <span className="material-symbols-outlined text-indigo-600 text-2xl">smart_toy</span> 
+                  AI Moderation Audit Report
                 </h3>
-                <p className="text-xs text-text-muted mt-1 font-medium">Complete record of all successful user deposits</p>
+                <p className="text-xs text-text-muted mt-1 font-medium">Detailed AI analysis of course content and quality</p>
               </div>
               <button 
-                onClick={handleCloseAllDeposits}
+                onClick={() => setIsAiReportModalOpen(false)}
                 className="w-10 h-10 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
               >
                 <span className="material-symbols-outlined">close</span>
@@ -6052,69 +6134,126 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             {/* Modal Content */}
-            <div className="p-8 overflow-y-auto bg-slate-50/50 flex-1">
-              {loadingAllDeposits ? (
-                <div className="flex flex-col items-center justify-center py-20">
-                  <div className="w-10 h-10 border-4 border-slate-200 border-t-primary rounded-full animate-spin"></div>
-                  <p className="mt-4 text-sm font-bold text-slate-500 animate-pulse">Loading deposit records...</p>
+            <div className="p-8 overflow-y-auto bg-slate-50 flex-1">
+              {loadingModerationReport ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-3 text-text-muted">
+                  <div className="w-8 h-8 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>
+                  <p className="text-sm font-bold">Loading AI report data...</p>
                 </div>
-              ) : allDeposits.length === 0 ? (
-                <div className="text-center py-20">
-                  <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="material-symbols-outlined text-4xl text-slate-400">money_off</span>
+              ) : !parsedAiReport ? (
+                <div className="text-center py-16 text-text-muted italic bg-white border border-gray-200 rounded-2xl flex flex-col items-center gap-4">
+                  <span className="material-symbols-outlined text-[48px] text-gray-300">report_off</span>
+                  <div>
+                    <p className="font-bold text-base text-slate-700">No Moderation Report Found</p>
+                    <p className="text-xs mt-1 max-w-sm">This course has not been moderated by AI yet, or the report is missing.</p>
                   </div>
-                  <h3 className="text-lg font-bold text-slate-700">No Deposits Found</h3>
-                  <p className="text-sm text-text-muted mt-2">There are currently no successful deposit records in the system.</p>
+                  <button
+                    onClick={async () => {
+                      setLoadingModerationReport(true);
+                      try {
+                        await adminService.triggerAiModeration(reviewingCourse?.id as string);
+                        showGlobalToast("Manually triggered AI Moderation task! Please wait a moment...", "info");
+                        setTimeout(() => handleReviewCourse(reviewingCourse as AdminCourse), 3000);
+                      } catch (err) {
+                        console.error("Failed to trigger moderation:", err);
+                        showGlobalToast("Failed to trigger AI moderation", "error");
+                        setLoadingModerationReport(false);
+                      }
+                    }}
+                    className="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md flex items-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">bolt</span>
+                    Trigger AI Moderation Now
+                  </button>
                 </div>
               ) : (
-                <div className="bg-white rounded-2xl border border-slate-200/60 overflow-hidden shadow-sm">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50/80 text-xs font-black text-slate-500 uppercase tracking-wider border-b border-slate-200">
-                        <th className="py-4 px-6">Transaction ID</th>
-                        <th className="py-4 px-6">User Name</th>
-                        <th className="py-4 px-6">Amount</th>
-                        <th className="py-4 px-6 text-right">Date & Time</th>
-                      </tr>
-                    </thead>
-                    <tbody className="text-sm font-semibold divide-y divide-slate-100">
-                      {allDeposits.map((dep) => (
-                        <tr key={dep.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="py-4 px-6 text-slate-500 text-xs">#{dep.id}</td>
-                          <td className="py-4 px-6 text-slate-900 flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-black">
-                              {dep.userName.charAt(0).toUpperCase()}
+                <div className="space-y-6">
+                  {/* Status Banner */}
+                  <div className={`p-5 rounded-2xl border flex items-start gap-4 ${
+                    parsedAiReport.isClean 
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}>
+                    <span className="material-symbols-outlined text-3xl mt-0.5">
+                      {parsedAiReport.isClean ? 'verified_user' : 'gpp_bad'}
+                    </span>
+                    <div>
+                      <h4 className="font-black text-lg">
+                        {parsedAiReport.isClean ? 'AI Assessment: CLEAN (Approved)' : 'AI Assessment: VIOLATIONS DETECTED (Rejected)'}
+                      </h4>
+                      <p className="text-sm font-medium mt-1 opacity-90">
+                        {parsedAiReport.isClean 
+                          ? 'This course meets all quality standards and policies.' 
+                          : 'This course violates one or more platform policies and cannot be automatically approved.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Course Level Violations */}
+                  {parsedAiReport.courseViolations && parsedAiReport.courseViolations.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="bg-slate-100 px-5 py-3 border-b border-slate-200">
+                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-rose-500">warning</span>
+                          Course-Level Violations
+                        </h4>
+                      </div>
+                      <ul className="divide-y divide-slate-100">
+                        {parsedAiReport.courseViolations.map((v: string, idx: number) => (
+                          <li key={idx} className="p-4 px-5 text-sm font-medium text-slate-700 flex items-start gap-3">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-2 shrink-0"></span>
+                            {v}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Lesson Level Violations */}
+                  {parsedAiReport.lessonViolations && parsedAiReport.lessonViolations.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="bg-slate-100 px-5 py-3 border-b border-slate-200">
+                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-orange-500">menu_book</span>
+                          Lesson-Level Violations
+                        </h4>
+                      </div>
+                      <div className="p-5 grid gap-4">
+                        {parsedAiReport.lessonViolations.map((lv: any, idx: number) => (
+                          <div key={idx} className="bg-orange-50/50 border border-orange-100 p-4 rounded-xl">
+                            <h5 className="font-bold text-orange-900 text-sm mb-1">
+                              Lesson ID: {lv.lessonId} - {lv.lessonTitle}
+                            </h5>
+                            <div className="mt-2 text-[10px] font-black px-2 py-1 bg-white text-orange-700 border border-orange-200 inline-block rounded-lg uppercase tracking-wider mb-2">
+                              {lv.violationType}
                             </div>
-                            {dep.userName}
-                          </td>
-                          <td className="py-4 px-6 text-emerald-600 font-bold">
-                            +{dep.amount.toLocaleString()} ₫
-                          </td>
-                          <td className="py-4 px-6 text-slate-500 text-xs text-right">
-                            {new Date(dep.date).toLocaleString('en-GB', {
-                              hour: '2-digit', minute: '2-digit', second: '2-digit',
-                              day: '2-digit', month: '2-digit', year: 'numeric'
-                            })}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                            <p className="text-sm font-medium text-slate-700">
+                              <span className="font-bold text-slate-900">Reason:</span> {lv.reason}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* If no violations but isClean is false, show fallback */}
+                  {!parsedAiReport.isClean && (!parsedAiReport.courseViolations || parsedAiReport.courseViolations.length === 0) && (!parsedAiReport.lessonViolations || parsedAiReport.lessonViolations.length === 0) && (
+                     <div className="bg-white p-5 rounded-2xl border border-rose-200 text-rose-700 font-medium text-sm">
+                       The AI rejected this course, but no specific violation details were provided in the report.
+                     </div>
+                  )}
                 </div>
               )}
             </div>
             
             {/* Modal Footer */}
-            <div className="px-8 py-5 border-t border-slate-100 bg-white flex justify-between items-center rounded-b-3xl">
-              <span className="text-xs font-bold text-slate-500">
-                Total Records: <span className="text-primary">{allDeposits.length}</span>
-              </span>
+            <div className="px-8 py-5 border-t border-slate-100 bg-white flex justify-end items-center rounded-b-3xl gap-3">
               <button
                 type="button"
-                onClick={handleCloseAllDeposits}
-                className="px-6 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors text-xs cursor-pointer"
+                onClick={() => setIsAiReportModalOpen(false)}
+                className="px-6 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors text-xs cursor-pointer"
               >
-                Close
+                Close Report
               </button>
             </div>
           </div>
