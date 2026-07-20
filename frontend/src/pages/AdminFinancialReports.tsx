@@ -275,7 +275,7 @@ export function AdminFinancialReports() {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-0 flex-wrap">
+      <div className="flex items-center gap-1 border-b border-slate-200 pb-0 overflow-x-auto no-scrollbar">
         {[
           { id: 'gross', label: 'Gross Revenue', icon: 'account_balance_wallet' },
           { id: 'instructor', label: 'Instructor Share', icon: 'school' },
@@ -289,13 +289,13 @@ export function AdminFinancialReports() {
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id as any)}
-            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-4 py-2.5 font-bold text-xs border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               activeTab === tab.id 
                 ? 'border-primary text-primary bg-primary/5' 
                 : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
             } rounded-t-xl`}
           >
-            <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
+            <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
             {tab.label}
           </button>
         ))}

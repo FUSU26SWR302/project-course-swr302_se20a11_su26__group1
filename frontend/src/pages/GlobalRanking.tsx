@@ -26,8 +26,12 @@ export const GlobalRanking: React.FC = () => {
         setLoading(true);
         const data = await rankingService.fetchGlobalRankings(activeLeague);
         setRankings(data);
-        const stats = await rankingService.fetchUserRankStats(activeLeague);
-        setUserStats(stats);
+        if (user) {
+          const stats = await rankingService.fetchUserRankStats(activeLeague);
+          setUserStats(stats);
+        } else {
+          setUserStats(null);
+        }
       } catch (err) {
         console.error("Error loading rankings:", err);
       } finally {
@@ -35,7 +39,7 @@ export const GlobalRanking: React.FC = () => {
       }
     };
     loadRankings();
-  }, [activeLeague]);
+  }, [activeLeague, user]);
 
   const handleLeagueSwitch = (league: 'all' | 'weekly' | 'monthly') => {
     if (league === activeLeague) return;

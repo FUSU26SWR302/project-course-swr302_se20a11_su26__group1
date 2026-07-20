@@ -243,7 +243,7 @@ export interface AdminProblem {
   exampleInput: string;
   exampleOutput: string;
   hint: string;
-  problemScope: 'LESSON' | 'CONTEST' | 'SHARED' | 'PRACTICE';
+  problemScope: 'LESSON' | 'CONTEST' | 'PRACTICE';
   difficulty: 'EASY' | 'MEDIUM' | 'HARD';
   isActive: boolean;
   createdBy: number;
@@ -256,6 +256,7 @@ export interface AdminProblem {
   solutions?: string;
   totalSubmissions: number;
   acceptedSubmissions: number;
+  isDeleted: boolean;
   tags?: string[];
   starterTemplates?: Record<string, string>;
 }
@@ -646,6 +647,23 @@ let mockActivityLogs: ActivityLog[] = [
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const adminService = {
+  cloneProblem: async (problemId: number) => {
+    try {
+      const response = await fetchWithAutoRefresh(`${BASE_URL}/admin/problems/${problemId}/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include' // or 'include' based on authentication mechanism, let's use default if omitted
+      });
+      if (!response.ok) {
+        throw new Error('Failed to clone problem');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error cloning problem:', error);
+      throw error;
+    }
+  },
+
   // Statistics
   async getDashboardStats(): Promise<AdminDashboardStats> {
     try {
@@ -921,7 +939,7 @@ export const adminService = {
     return data.result;
   },
 
-  async updateProblemScope(problemId: number, problemScope: 'LESSON' | 'CONTEST' | 'SHARED' | 'PRACTICE'): Promise<AdminProblem> {
+  async updateProblemScope(problemId: number, problemScope: 'LESSON' | 'CONTEST' | 'PRACTICE'): Promise<AdminProblem> {
     const response = await fetchWithAutoRefresh(`${BASE_URL}/admin/problems/${problemId}/scope`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -987,6 +1005,30 @@ export const adminService = {
     }
   },
 
+  async getProblemVersions(problemId: number): Promise<any[]> {
+    const response = await fetchWithAutoRefresh(`${BASE_URL}/admin/problems/${problemId}/versions`, {
+      method: 'GET',
+      credentials: 'include'
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch problem versions');
+    }
+    const data = await response.json();
+    return data.result;
+  },
+
+  async rollbackProblemVersion(problemId: number, versionId: number): Promise<any> {
+    const response = await fetchWithAutoRefresh(`${BASE_URL}/admin/problems/${problemId}/rollback/${versionId}`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+    if (!response.ok) {
+      throw new Error('Failed to rollback problem version');
+    }
+    const data = await response.json();
+    return data.result;
+  },
+
   async getTags(): Promise<{ id: number; name: string; slug: string }[]> {
     const response = await fetch(`${BASE_URL}/admin/problems/tags`, { credentials: 'include' });
     if (!response.ok) {
@@ -1034,17 +1076,29 @@ export const adminService = {
   },
 
   // Contests
-  async getContests(): Promise<AdminContest[]> {
+  async getContests(page: number = 0, size: number = 10, tab: string = 'active', status: string = 'ALL'): Promise<PageResponse<AdminContest>> {
     try {
-      const response = await fetchWithAutoRefresh(`${BASE_URL}/admin/contests`, { credentials: 'include' });
+      const response = await fetchWithAutoRefresh(
+        `${BASE_URL}/admin/contests?page=${page}&size=${size}&tab=${tab}&status=${status}`,
+        { credentials: 'include' }
+      );
       if (response.ok) {
         const data = await response.json();
-        return data.result || [];
+        return data.result || { content: [], totalPages: 0, totalElements: 0, page: 0, size: 10, numberOfElements: 0, first: true, last: true };
       }
     } catch (err) {
       console.warn("Failed to get Contests from backend:", err);
     }
-    return [];
+    return { content: [], totalPages: 0, totalElements: 0, page: 0, size: 10, numberOfElements: 0, first: true, last: true };
+  },
+
+  async getContestById(contestId: number): Promise<AdminContest> {
+    const response = await fetchWithAutoRefresh(`${BASE_URL}/admin/contests/${contestId}`, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch contest details');
+    }
+    const data = await response.json();
+    return data.result;
   },
 
   async createContest(contest: Omit<AdminContest, 'id' | 'status' | 'participantCount' | 'submissionCount' | 'averageScore'>): Promise<AdminContest> {

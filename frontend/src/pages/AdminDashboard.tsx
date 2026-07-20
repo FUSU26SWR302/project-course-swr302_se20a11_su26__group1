@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import DiffViewer from '../components/common/DiffViewer';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { adminService } from '../services/adminService';
 import { fetchCourseCurriculum, fetchLearningLessonDetail } from '../services/courseService';
@@ -22,6 +23,7 @@ import type {
   PageResponse
 } from '../services/adminService';
 import Editor from '@monaco-editor/react';
+
 
 const GENERATOR_TEMPLATES: Record<string, string> = {
   java: `import java.util.*;\n\npublic class Solution {\n    public static void main(String[] args) {\n        // Number of test cases\n        int numberOfTests = 3;\n        \n        for (int i = 0; i < numberOfTests; i++) {\n            // Write your logic here\n            \n            // DO NOT REMOVE\n            System.out.println("---TESTCASE---");\n            System.out.println("INPUT:");\n            \n            // Print your input here\n            \n            // DO NOT REMOVE\n            System.out.println("OUTPUT:");\n            \n            // Print your output here\n        }\n    }\n}`,
@@ -182,10 +184,12 @@ export const AdminDashboard: React.FC = () => {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
 
-  // Navigation Active Tab: 'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial'
-  const getTabFromUrl = (urlTab?: string): 'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial' => {
+  // Navigation Active Tab
+  const getTabFromUrl = (urlTab?: string): 'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial' | 'problems-create' | 'problems-edit' => {
     if (urlTab === 'courses') return 'courses';
     if (urlTab === 'problems') return 'problems';
+    if (urlTab === 'problems-create') return 'problems-create';
+    if (urlTab === 'problems-edit') return 'problems-edit';
     if (urlTab === 'contests') return 'contest';
     if (urlTab === 'instructors') return 'instructor';
     if (urlTab === 'users') return 'users';
@@ -193,7 +197,48 @@ export const AdminDashboard: React.FC = () => {
     return 'dashboard';
   };
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial'>(getTabFromUrl(tab));
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'courses' | 'problems' | 'contest' | 'instructor' | 'users' | 'financial' | 'problems-create' | 'problems-edit'>(getTabFromUrl(tab));
+
+  // --- Problem History State ---
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [problemVersions, setProblemVersions] = useState<any[]>([]);
+  const [selectedVersionIndexForDiff, setSelectedVersionIndexForDiff] = useState<number | null>(null);
+  
+  const formatTestcases = (testcases?: any[]) => {
+    if (!testcases || testcases.length === 0) return 'No testcases available';
+    return testcases.map((tc, idx) => `Testcase ${idx + 1}:\nInput:\n${tc.inputData}\nExpected Output:\n${tc.expectedOutput}`).join('\n\n');
+  };
+
+  const [historyProblemId, setHistoryProblemId] = useState<number | null>(null);
+  const [selectedProblemForView, setSelectedProblemForView] = useState<AdminProblem | null>(null);
+
+  const handleViewProblemHistory = async (problemId: number) => {
+    try {
+      const versions = await adminService.getProblemVersions(problemId);
+      setProblemVersions(versions.sort((a: any, b: any) => b.versionNumber - a.versionNumber));
+      setHistoryProblemId(problemId);
+      setShowHistoryModal(true);
+    } catch (error) {
+      showGlobalToast("Failed to fetch problem history", "error");
+    }
+  };
+
+  const handleRollbackProblemVersion = async (problemId: number, versionId: number) => {
+    try {
+      await adminService.rollbackProblemVersion(problemId, versionId);
+      showGlobalToast("Problem rolled back successfully", "success");
+      
+      // Refresh the history
+      const versions = await adminService.getProblemVersions(problemId);
+      setProblemVersions(versions.sort((a: any, b: any) => b.versionNumber - a.versionNumber));
+      
+      // Refresh main table
+      loadData();
+    } catch (error) {
+      showGlobalToast("Failed to rollback problem", "error");
+    }
+  };
+  // -----------------------------
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
   // States for API data
@@ -228,13 +273,25 @@ export const AdminDashboard: React.FC = () => {
   const [instStatusFilter, setInstStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED'>('ALL');
   const [problemSearch, setProblemSearch] = useState('');
   const [problemDifficultyFilter, setProblemDifficultyFilter] = useState<'ALL' | 'EASY' | 'MEDIUM' | 'HARD'>('ALL');
-  const [problemScopeFilter, setProblemScopeFilter] = useState<'ALL' | 'PRACTICE' | 'CONTEST' | 'SHARED'>('ALL');
-  const [problemSubTab, setProblemSubTab] = useState<'repository' | 'practice' | 'contest' | 'shared' | 'draft'>('repository');
+  const [problemScopeFilter, setProblemScopeFilter] = useState<'ALL' | 'PRACTICE' | 'CONTEST'>('ALL');
+  const [problemSubTab, setProblemSubTab] = useState<'repository' | 'practice' | 'contest' | 'draft' | 'deleted'>('repository');
   const [problemPage, setProblemPage] = useState(1);
   const [selectedProblems, setSelectedProblems] = useState<number[]>([]);
+  const [testcasesList, setTestcasesList] = useState<Omit<AdminProblemTestcase, 'id'>[]>([]);
+  const [testcaseTab, setTestcaseTab] = useState<'manual' | 'upload'>('manual');
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [isSavingTestcases, setIsSavingTestcases] = useState(false);
+  const [allTags, setAllTags] = useState<{ id: number; name: string; slug: string }[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const [isCreateContestOpen, setIsCreateContestOpen] = useState(false);
+  const [isEditContestOpen, setIsEditContestOpen] = useState(false);
   const problemsPerPage = 10;
   const [contestStatusFilter, setContestStatusFilter] = useState<'ALL' | 'DRAFT' | 'UPCOMING' | 'ONGOING' | 'ENDED' | 'DELETED'>('ALL');
   const [contestSubTab, setContestSubTab] = useState<'active' | 'trash'>('active');
+  const [contestPage, setContestPage] = useState(1);
+  const [contestSize, setContestSize] = useState(10);
+  const [totalContestPages, setTotalContestPages] = useState(0);
+  const [totalContestsCount, setTotalContestsCount] = useState(0);
 
   useEffect(() => {
     setProblemPage(1);
@@ -254,6 +311,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Modal / review panel states
   const [selectedUserDetail, setSelectedUserDetail] = useState<AdminUser | null>(null);
+  const [selectedInstructorDetail, setSelectedInstructorDetail] = useState<AdminInstructor | null>(null);
   const [isCreateProblemOpen, setIsCreateProblemOpen] = useState(false);
   const [isEditProblemOpen, setIsEditProblemOpen] = useState(false);
   const [editingProblemId, setEditingProblemId] = useState<number | null>(null);
@@ -261,17 +319,6 @@ export const AdminDashboard: React.FC = () => {
   // Testcase state variables
   const [isTestcaseModalOpen, setIsTestcaseModalOpen] = useState(false);
   const [testcaseProblem, setTestcaseProblem] = useState<AdminProblem | null>(null);
-  const [testcasesList, setTestcasesList] = useState<Omit<AdminProblemTestcase, 'id'>[]>([]);
-  const [testcaseTab, setTestcaseTab] = useState<'manual' | 'upload'>('manual');
-  const [zipFile, setZipFile] = useState<File | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-  const [isSavingTestcases, setIsSavingTestcases] = useState(false);
-  const [testCaseGenerationMode, setTestCaseGenerationMode] = useState<'manual' | 'generate'>('manual');
-  const [generatorLanguage, setGeneratorLanguage] = useState('java');
-  const [generatorCode, setGeneratorCode] = useState(GENERATOR_TEMPLATES['java']);
-  const [generateLoading, setGenerateLoading] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
-  const [isCreateContestOpen, setIsCreateContestOpen] = useState(false);
   const [isEditContestMode, setIsEditContestMode] = useState(false);
   const [editingContestId, setEditingContestId] = useState<number | null>(null);
   const [editingContestStatus, setEditingContestStatus] = useState<string>('');
@@ -537,6 +584,7 @@ export const AdminDashboard: React.FC = () => {
     }
     setReviewContestProblemId(null);
     setSelectedUserDetail(null);
+    setSelectedInstructorDetail(null);
     setIsCreateProblemOpen(false);
     setIsEditProblemOpen(false);
     setEditingProblemId(null);
@@ -546,21 +594,7 @@ export const AdminDashboard: React.FC = () => {
     setTestcasesList([]);
     setZipFile(null);
 
-    if (tab === 'courses') {
-      setActiveTab('courses');
-    } else if (tab === 'problems') {
-      setActiveTab('problems');
-    } else if (tab === 'contests') {
-      setActiveTab('contest');
-    } else if (tab === 'instructors') {
-      setActiveTab('instructor');
-    } else if (tab === 'users') {
-      setActiveTab('users');
-    } else if (tab === 'financial') {
-      setActiveTab('financial');
-    } else {
-      setActiveTab('dashboard');
-    }
+    setActiveTab(getTabFromUrl(tab));
   }, [tab]);
 
   useEffect(() => {
@@ -656,8 +690,16 @@ export const AdminDashboard: React.FC = () => {
         setProblems(probsRes || []);
         setAllTags(tagsRes || []);
       } else if (activeTab === 'contest') {
-        const contestsRes = await adminService.getContests().catch(err => { console.error("Failed to load contests:", err); return []; });
-        setContests(contestsRes || []);
+        const contestsRes = await adminService.getContests(contestPage - 1, contestSize, contestSubTab, contestStatusFilter).catch(err => { console.error("Failed to load contests:", err); return null; });
+        if (contestsRes) {
+          setContests(contestsRes.content || []);
+          setTotalContestPages(contestsRes.totalPages || 0);
+          setTotalContestsCount(contestsRes.totalElements || 0);
+        } else {
+          setContests([]);
+          setTotalContestPages(0);
+          setTotalContestsCount(0);
+        }
       } else if (activeTab === 'instructor') {
         const instsRes = await adminService.getInstructors().catch(err => { console.error("Failed to load instructors:", err); return []; });
         setInstructors(instsRes || []);
@@ -685,7 +727,7 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [activeTab, courseFilter]);
+  }, [activeTab, courseFilter, contestPage, contestSubTab, contestStatusFilter]);
 
   const exportFinancialDataToCSV = () => {
     if (filteredFinancialData.length === 0) {
@@ -710,30 +752,6 @@ export const AdminDashboard: React.FC = () => {
 
 
   // Add Problem form state
-  const [newProbTitle, setNewProbTitle] = useState('');
-  const [newProbDesc, setNewProbDesc] = useState('');
-  const [newProbInputDesc, setNewProbInputDesc] = useState('');
-  const [newProbOutputDesc, setNewProbOutputDesc] = useState('');
-  const [newProbConstraints, setNewProbConstraints] = useState('');
-  const [newProbExampleInput, setNewProbExampleInput] = useState('');
-  const [newProbExampleOutput, setNewProbExampleOutput] = useState('');
-  const [newProbHints, setNewProbHints] = useState<string[]>(['']);
-  const [newProbScope, setNewProbScope] = useState<'LESSON' | 'CONTEST' | 'SHARED' | 'PRACTICE'>('PRACTICE');
-  const [newProbDifficulty, setNewProbDifficulty] = useState<'EASY' | 'MEDIUM' | 'HARD'>('MEDIUM');
-  const [newProbScore, setNewProbScore] = useState(100);
-  const [newProbTimeLimit, setNewProbTimeLimit] = useState(2000);
-  const [newProbMemoryLimit, setNewProbMemoryLimit] = useState(128000);
-  const [newProbIsPublic, setNewProbIsPublic] = useState(false);
-  const [newProbSolutions, setNewProbSolutions] = useState('');
-  const [newProbTags, setNewProbTags] = useState<string[]>([]);
-  const [newProbStarterC, setNewProbStarterC] = useState('');
-  const [newProbStarterCpp, setNewProbStarterCpp] = useState('');
-  const [newProbStarterJava, setNewProbStarterJava] = useState('');
-  const [newProbStarterPython, setNewProbStarterPython] = useState('');
-  const [newProbStarterCsharp, setNewProbStarterCsharp] = useState('');
-  const [allTags, setAllTags] = useState<{ id: number; name: string; slug: string }[]>([]);
-  const [starterActiveTab, setStarterActiveTab] = useState<'C' | 'C++' | 'Java' | 'Python 3' | 'C#'>('C');
-
   // Add Contest form state
   const [newContestTitle, setNewContestTitle] = useState('');
   const [newContestDesc, setNewContestDesc] = useState('');
@@ -1060,6 +1078,9 @@ export const AdminDashboard: React.FC = () => {
       } else {
         const updated = await adminService.setInstructorStatus(id, newStatus as 'ACTIVE' | 'SUSPENDED');
         setInstructors(prev => prev.map(ins => ins.id === id ? updated : ins));
+        if (selectedInstructorDetail?.id === id) {
+          setSelectedInstructorDetail(updated);
+        }
       }
       setStatusConfirmTarget(null);
       showGlobalToast(`${type === 'USER' ? 'User' : 'Instructor'} status successfully updated to ${newStatus}`, "success");
@@ -1070,282 +1091,31 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  const handleCreateProblemSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProbTitle.trim()) { showGlobalToast("Problem Title is required.", "error"); return; }
-    if (!newProbDesc.trim()) { showGlobalToast("Problem Description is required.", "error"); return; }
-    if (!newProbInputDesc.trim()) { showGlobalToast("Input Description is required.", "error"); return; }
-    if (!newProbOutputDesc.trim()) { showGlobalToast("Output Description is required.", "error"); return; }
-    if (!newProbConstraints.trim()) { showGlobalToast("Constraints are required.", "error"); return; }
-    if (!newProbExampleInput.trim()) { showGlobalToast("Example Input is required.", "error"); return; }
-    if (!newProbExampleOutput.trim()) { showGlobalToast("Example Output is required.", "error"); return; }
-    if (newProbScore <= 0) { showGlobalToast("Max Score must be greater than 0.", "error"); return; }
-    if (newProbTimeLimit <= 0) { showGlobalToast("Time Limit must be greater than 0.", "error"); return; }
-    if (newProbMemoryLimit <= 0) { showGlobalToast("Memory Limit must be greater than 0.", "error"); return; }
-    if (testcasesList.length === 0) { showGlobalToast("At least one test case is required.", "error"); return; }
-    if (testcasesList.some(tc => !tc.inputData.trim() || !tc.expectedOutput.trim())) { showGlobalToast("All test cases must have input and expected output data.", "error"); return; }
+  const handleCreateProblemClick = () => {
+    navigate('/admin/problems-create');
+  };
 
-    try {
-      const starterTemplates: Record<string, string> = {};
-      if (newProbStarterC) starterTemplates['C'] = newProbStarterC;
-      if (newProbStarterCpp) starterTemplates['C++'] = newProbStarterCpp;
-      if (newProbStarterJava) starterTemplates['Java'] = newProbStarterJava;
-      if (newProbStarterPython) starterTemplates['Python 3'] = newProbStarterPython;
-      if (newProbStarterCsharp) starterTemplates['C#'] = newProbStarterCsharp;
-
-      const newProb = await adminService.createProblem({
-        title: newProbTitle.trim(),
-        description: newProbDesc.trim(),
-        inputDescription: newProbInputDesc.trim(),
-        outputDescription: newProbOutputDesc.trim(),
-        constraints: newProbConstraints.trim(),
-        exampleInput: newProbExampleInput.trim(),
-        exampleOutput: newProbExampleOutput.trim(),
-        hint: JSON.stringify(newProbHints.filter(h => h.trim() !== '')),
-        problemScope: newProbScope,
-        difficulty: newProbDifficulty,
-        totalTestcases: 0,
-        timeLimitMs: newProbTimeLimit,
-        memoryLimitKb: newProbMemoryLimit,
-        isPublic: newProbIsPublic,
-        score: newProbScore,
-        solutions: newProbSolutions.trim(),
-        tags: newProbTags,
-        starterTemplates
-      });
-
-      setProblems(prev => [...prev, newProb]);
-
-      // If there are testcases generated/added manually during creation, save them
-      if (testcasesList.length > 0) {
+  const handleCloneProblem = async (problemId: number) => {
+    triggerConfirm(
+      "Clone Problem",
+      "Are you sure you want to clone this problem? This will create a duplicate copy with all its testcases.",
+      async () => {
         try {
-          const tcsToSave = testcasesList.map((tc, idx) => ({
-            ...tc,
-            problemId: newProb.id,
-            orderIndex: idx + 1
-          }));
-          const savedTcs = await adminService.saveProblemTestcases(newProb.id, tcsToSave);
-          // Update totalTestcases on the newly created problem
-          setProblems(prev => prev.map(p => 
-            p.id === newProb.id ? { ...p, totalTestcases: savedTcs.length } : p
-          ));
-        } catch (tcError) {
-          showGlobalToast("Problem created, but failed to save testcases.", "error");
+          await adminService.cloneProblem(problemId);
+          showGlobalToast("Problem cloned successfully", "success");
+          loadData();
+        } catch (err: any) {
+          showGlobalToast('Failed to clone problem: ' + (err.message || 'Unknown error'), "error");
         }
       }
-
-      setIsCreateProblemOpen(false);
-
-      // Reset form
-      setNewProbTitle('');
-      setNewProbDesc('');
-      setNewProbInputDesc('');
-      setNewProbOutputDesc('');
-      setNewProbConstraints('');
-      setNewProbExampleInput('');
-      setNewProbExampleOutput('');
-      setNewProbHints(['']);
-      setNewProbScope('PRACTICE');
-      setNewProbDifficulty('MEDIUM');
-      setNewProbScore(100);
-      setNewProbTimeLimit(2000);
-      setNewProbMemoryLimit(128000);
-      setNewProbIsPublic(false);
-      setNewProbSolutions('');
-      setNewProbTags([]);
-      setNewProbStarterC('');
-      setNewProbStarterCpp('');
-      setNewProbStarterJava('');
-      setNewProbStarterPython('');
-      setNewProbStarterCsharp('');
-      setStarterActiveTab('C');
-
-      showGlobalToast(`Problem "${newProb.title}" created successfully!`, "success");
-    } catch (error) {
-      showGlobalToast("Failed to create problem", "error");
-    }
+    );
   };
 
-  const handleCreateProblemClick = () => {
-    setEditingProblemId(null);
-    setNewProbTitle('');
-    setNewProbDesc('');
-    setNewProbInputDesc('');
-    setNewProbOutputDesc('');
-    setNewProbConstraints('');
-    setNewProbExampleInput('');
-    setNewProbExampleOutput('');
-    setNewProbHints(['']);
-    setNewProbScope('PRACTICE');
-    setNewProbDifficulty('MEDIUM');
-    setNewProbScore(100);
-    setNewProbTimeLimit(2000);
-    setNewProbMemoryLimit(128000);
-    setNewProbIsPublic(false);
-    setNewProbSolutions('');
-    setNewProbTags([]);
-    setNewProbStarterC('');
-    setNewProbStarterCpp('');
-    setNewProbStarterJava('');
-    setNewProbStarterPython('');
-    setNewProbStarterCsharp('');
-    setStarterActiveTab('C');
-    setTestcasesList([{ problemId: 0, inputData: '', expectedOutput: '', orderIndex: 1 }]);
-    setGeneratorCode(GENERATOR_TEMPLATES['cpp']);
-    setGeneratorLanguage('cpp');
-    setTestCaseGenerationMode('manual');
-    setIsCreateProblemOpen(true);
-  };
 
   const handleEditProblemClick = (p: AdminProblem) => {
-    setEditingProblemId(p.id);
-    setNewProbTitle(p.title);
-    setNewProbDesc(p.description);
-    setNewProbInputDesc(p.inputDescription || '');
-    setNewProbOutputDesc(p.outputDescription || '');
-    setNewProbConstraints(p.constraints || '');
-    setNewProbExampleInput(p.exampleInput || '');
-    setNewProbExampleOutput(p.exampleOutput || '');
-    let hintsToSet = [''];
-    if (p.hint) {
-      try {
-        const parsed = JSON.parse(p.hint);
-        if (Array.isArray(parsed)) hintsToSet = parsed.length > 0 ? parsed : [''];
-        else hintsToSet = [p.hint];
-      } catch {
-        hintsToSet = [p.hint];
-      }
-    }
-    setNewProbHints(hintsToSet);
-    setNewProbScope(p.problemScope);
-    setNewProbDifficulty(p.difficulty);
-    setNewProbScore(p.score);
-    setNewProbTimeLimit(p.timeLimitMs);
-    setNewProbMemoryLimit(p.memoryLimitKb);
-    setNewProbIsPublic(p.isPublic);
-    setNewProbSolutions(p.solutions || '');
-    setNewProbTags(p.tags || []);
-    setNewProbStarterC(p.starterTemplates?.['C'] || '');
-    setNewProbStarterCpp(p.starterTemplates?.['C++'] || '');
-    setNewProbStarterJava(p.starterTemplates?.['Java'] || '');
-    setNewProbStarterPython(p.starterTemplates?.['Python 3'] || '');
-    setNewProbStarterCsharp(p.starterTemplates?.['C#'] || '');
-    setNewProbStarterCsharp(p.starterTemplates?.['C#'] || '');
-    setStarterActiveTab('C');
-    
-    // Fetch testcases automatically for this problem
-    adminService.getProblemTestcases(p.id).then(existing => {
-      if (existing && existing.length > 0) {
-        setTestcasesList(existing.map(tc => ({
-          problemId: p.id,
-          inputData: tc.inputData,
-          expectedOutput: tc.expectedOutput,
-          orderIndex: tc.orderIndex,
-          scoreWeight: tc.scoreWeight,
-          isHidden: tc.isHidden
-        })));
-      } else {
-        setTestcasesList([]);
-      }
-    }).catch(() => {
-      setTestcasesList([]);
-    });
-
-    setIsEditProblemOpen(true);
+    navigate(`/admin/problems-edit/${p.id}`, { state: { problem: p } });
   };
 
-  const handleEditProblemSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (editingProblemId === null) return;
-    if (!newProbTitle.trim()) { showGlobalToast("Problem Title is required.", "error"); return; }
-    if (!newProbDesc.trim()) { showGlobalToast("Problem Description is required.", "error"); return; }
-    if (!newProbInputDesc.trim()) { showGlobalToast("Input Description is required.", "error"); return; }
-    if (!newProbOutputDesc.trim()) { showGlobalToast("Output Description is required.", "error"); return; }
-    if (!newProbConstraints.trim()) { showGlobalToast("Constraints are required.", "error"); return; }
-    if (!newProbExampleInput.trim()) { showGlobalToast("Example Input is required.", "error"); return; }
-    if (!newProbExampleOutput.trim()) { showGlobalToast("Example Output is required.", "error"); return; }
-    if (newProbScore <= 0) { showGlobalToast("Max Score must be greater than 0.", "error"); return; }
-    if (newProbTimeLimit <= 0) { showGlobalToast("Time Limit must be greater than 0.", "error"); return; }
-    if (newProbMemoryLimit <= 0) { showGlobalToast("Memory Limit must be greater than 0.", "error"); return; }
-    if (testcasesList.length === 0) { showGlobalToast("At least one test case is required.", "error"); return; }
-    if (testcasesList.some(tc => !tc.inputData.trim() || !tc.expectedOutput.trim())) { showGlobalToast("All test cases must have input and expected output data.", "error"); return; }
-
-    try {
-      const existingProb = problems.find(p => p.id === editingProblemId);
-      const starterTemplates: Record<string, string> = {};
-      if (newProbStarterC) starterTemplates['C'] = newProbStarterC;
-      if (newProbStarterCpp) starterTemplates['C++'] = newProbStarterCpp;
-      if (newProbStarterJava) starterTemplates['Java'] = newProbStarterJava;
-      if (newProbStarterPython) starterTemplates['Python 3'] = newProbStarterPython;
-      if (newProbStarterCsharp) starterTemplates['C#'] = newProbStarterCsharp;
-
-      const updatedProb = await adminService.updateProblem(editingProblemId, {
-        title: newProbTitle.trim(),
-        description: newProbDesc.trim(),
-        inputDescription: newProbInputDesc.trim(),
-        outputDescription: newProbOutputDesc.trim(),
-        constraints: newProbConstraints.trim(),
-        exampleInput: newProbExampleInput.trim(),
-        exampleOutput: newProbExampleOutput.trim(),
-        hint: JSON.stringify(newProbHints.filter(h => h.trim() !== '')),
-        problemScope: newProbScope,
-        difficulty: newProbDifficulty,
-        totalTestcases: existingProb?.totalTestcases || 0,
-        timeLimitMs: newProbTimeLimit,
-        memoryLimitKb: newProbMemoryLimit,
-        isPublic: newProbIsPublic,
-        score: newProbScore,
-        solutions: newProbSolutions.trim(),
-        tags: newProbTags,
-        starterTemplates
-      });
-
-      // Save testcases
-      try {
-        const tcsToSave = testcasesList.map((tc, idx) => ({
-          ...tc,
-          problemId: editingProblemId,
-          orderIndex: idx + 1
-        }));
-        const savedTcs = await adminService.saveProblemTestcases(editingProblemId, tcsToSave);
-        updatedProb.totalTestcases = savedTcs.length;
-      } catch (tcError) {
-        showGlobalToast("Problem metadata updated, but failed to save testcases.", "error");
-      }
-
-      setProblems(prev => prev.map(p => p.id === editingProblemId ? updatedProb : p));
-      setIsEditProblemOpen(false);
-      setEditingProblemId(null);
-
-      // Reset form
-      setNewProbTitle('');
-      setNewProbDesc('');
-      setNewProbInputDesc('');
-      setNewProbOutputDesc('');
-      setNewProbConstraints('');
-      setNewProbExampleInput('');
-      setNewProbExampleOutput('');
-      setNewProbHints(['']);
-      setNewProbScope('PRACTICE');
-      setNewProbDifficulty('MEDIUM');
-      setNewProbScore(100);
-      setNewProbTimeLimit(2000);
-      setNewProbMemoryLimit(128000);
-      setNewProbIsPublic(false);
-      setNewProbSolutions('');
-      setNewProbTags([]);
-      setNewProbStarterC('');
-      setNewProbStarterCpp('');
-      setNewProbStarterJava('');
-      setNewProbStarterPython('');
-      setNewProbStarterCsharp('');
-      setStarterActiveTab('C');
-
-      showGlobalToast(`Problem "${updatedProb.title}" updated successfully!`, "success");
-    } catch (error) {
-      showGlobalToast("Failed to update problem", "error");
-    }
-  };
 
   const handleUpdateProblemScope = async (problemId: number, scope: 'PRACTICE' | 'CONTEST') => {
     try {
@@ -1380,52 +1150,6 @@ export const AdminDashboard: React.FC = () => {
         }
       }
     );
-  };
-
-  const handleRunAndGenerateTestcases = async () => {
-    setGenerateError(null);
-    setGenerateLoading(true);
-    try {
-      const response = await fetch('http://localhost:8080/nonstopcoding/instructor/testcases/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          language: generatorLanguage,
-          code: generatorCode
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'An error occurred while generating testcases.');
-      }
-      
-      const generatedTestcases = data.result;
-      if (generatedTestcases && generatedTestcases.length > 0) {
-        setTestcasesList(prev => [
-          ...prev, 
-          ...generatedTestcases.map((tc: any, index: number) => ({
-             problemId: editingProblemId || 0,
-             inputData: tc.input,
-             expectedOutput: tc.output,
-             orderIndex: prev.length + index + 1,
-             isHidden: false
-          }))
-        ]);
-        setTestCaseGenerationMode('manual'); // Switch back to view them
-        showGlobalToast(`Generated ${generatedTestcases.length} testcases successfully!`, "success");
-      } else {
-        setGenerateError("Code executed successfully but no test cases were found. Please check your output format.");
-      }
-    } catch (err: any) {
-      setGenerateError(err.message || "An error occurred while generating testcases.");
-    } finally {
-      setGenerateLoading(false);
-    }
   };
 
   const handleOpenTestcaseModal = async (p: AdminProblem) => {
@@ -1487,8 +1211,6 @@ export const AdminDashboard: React.FC = () => {
         setProblemSubTab('practice');
       } else if (scope === 'CONTEST') {
         setProblemSubTab('contest');
-      } else if (scope === 'SHARED') {
-        setProblemSubTab('shared');
       }
 
       setIsTestcaseModalOpen(false);
@@ -1590,7 +1312,7 @@ export const AdminDashboard: React.FC = () => {
         password: newContestPassword.trim() || undefined
       });
 
-      setContests(prev => [...prev, newContest]);
+      await loadData();
       setIsCreateContestOpen(false);
 
       // Reset form
@@ -1708,7 +1430,7 @@ export const AdminDashboard: React.FC = () => {
   const handleRestoreContest = async (id: number) => {
     try {
       const updated = await adminService.restoreContest(id);
-      setContests(prev => prev.map(c => c.id === id ? updated : c));
+      await loadData();
       if (reviewingContest && reviewingContest.id === id) {
         setReviewingContest(updated);
       }
@@ -1721,11 +1443,14 @@ export const AdminDashboard: React.FC = () => {
   const handleDeleteContest = async (id: number) => {
     try {
       await adminService.deleteContest(id);
-      const updatedContests = await adminService.getContests();
-      setContests(updatedContests);
+      await loadData();
       if (reviewingContest && reviewingContest.id === id) {
-        const found = updatedContests.find(c => c.id === id);
-        if (found) setReviewingContest(found);
+        try {
+          const updated = await adminService.getContestById(id);
+          setReviewingContest(updated);
+        } catch (err) {
+          setReviewingContest(null);
+        }
       }
       showGlobalToast("Contest moved to trash successfully!", "success");
     } catch (error: any) {
@@ -1736,7 +1461,7 @@ export const AdminDashboard: React.FC = () => {
   const handleHardDeleteContest = async (id: number) => {
     try {
       await adminService.hardDeleteContest(id);
-      setContests(prev => prev.filter(c => c.id !== id));
+      await loadData();
       if (reviewingContest && reviewingContest.id === id) {
         setReviewingContest(null);
         setReviewContestProblemId(null);
@@ -1783,37 +1508,28 @@ export const AdminDashboard: React.FC = () => {
 
       let matchesSubTab = false;
       if (problemSubTab === 'repository') {
-        matchesSubTab = true; // All problems
+        matchesSubTab = !p.isDeleted; // Only show non-deleted in ALL problems
       } else if (problemSubTab === 'draft') {
-        matchesSubTab = !p.isPublic;
+        matchesSubTab = !p.isPublic && !p.isDeleted;
+      } else if (problemSubTab === 'deleted') {
+        matchesSubTab = p.isDeleted;
       } else if (problemSubTab === 'practice') {
-        matchesSubTab = p.problemScope === 'PRACTICE' && p.isPublic;
+        matchesSubTab = p.problemScope === 'PRACTICE' && p.isPublic && !p.isDeleted;
       } else if (problemSubTab === 'contest') {
-        matchesSubTab = p.problemScope === 'CONTEST' && p.isPublic;
-      } else if (problemSubTab === 'shared') {
-        matchesSubTab = p.problemScope === 'SHARED' && p.isPublic;
+        matchesSubTab = p.problemScope === 'CONTEST' && p.isPublic && !p.isDeleted;
       }
 
       return matchesSearch && matchesDifficulty && matchesScope && matchesSubTab;
     });
   }, [problems, problemSearch, problemDifficultyFilter, problemScopeFilter, problemSubTab]);
 
-  const filteredContests = useMemo(() => {
-    let list = contests;
-    if (contestSubTab === 'trash') {
-      list = contests.filter(c => c.status === 'DELETED');
-    } else {
-      list = contests.filter(c => c.status !== 'DELETED');
-      if (contestStatusFilter !== 'ALL') {
-        list = list.filter(c => c.status === contestStatusFilter);
-      }
-    }
-    return list;
-  }, [contests, contestStatusFilter, contestSubTab]);
+  const filteredContests = contests;
 
   const totalProblemPages = Math.ceil(filteredProblems.length / problemsPerPage);
   const safeProblemPage = Math.min(problemPage, Math.max(1, totalProblemPages));
   const paginatedProblems = filteredProblems.slice((safeProblemPage - 1) * problemsPerPage, safeProblemPage * problemsPerPage);
+
+  const safeContestPage = Math.min(contestPage, Math.max(1, totalContestPages));
 
   // Auth checking context (Only allow role == ADMIN, or default username admin, let's keep it safe)
   // const isAdmin = useMemo(() => {
@@ -2570,11 +2286,13 @@ export const AdminDashboard: React.FC = () => {
                 {(reviewingContest.status === 'DRAFT' || reviewingContest.status === 'UPCOMING') && (
                   <button
                     onClick={() => {
-                      if (window.confirm("Are you sure you want to move this contest to trash?")) {
-                        handleDeleteContest(reviewingContest.id);
-                      }
+                      triggerConfirm(
+                        "Move Contest to Trash",
+                        "Are you sure you want to move this contest to trash?",
+                        () => handleDeleteContest(reviewingContest.id)
+                      );
                     }}
-                    className="flex items-center gap-1.5 text-xs text-white font-bold bg-red-500 hover:bg-red-655 border-none px-3 py-1.5 rounded-lg cursor-pointer shadow-sm transition-colors"
+                    className="flex items-center gap-1.5 text-xs text-white font-bold bg-red-500 hover:bg-red-600 border-none px-3 py-1.5 rounded-lg cursor-pointer shadow-sm transition-colors"
                   >
                     <span className="material-symbols-outlined text-[16px]">delete</span>
                     Delete
@@ -2586,9 +2304,11 @@ export const AdminDashboard: React.FC = () => {
                   reviewingContest.submissionCount === 0 ? (
                     <button
                       onClick={() => {
-                        if (window.confirm("Are you sure you want to permanently delete this contest? This cannot be undone.")) {
-                          handleHardDeleteContest(reviewingContest.id);
-                        }
+                        triggerConfirm(
+                          "Permanently Delete Contest",
+                          "Are you sure you want to permanently delete this contest? This action is irreversible.",
+                          () => handleHardDeleteContest(reviewingContest.id)
+                        );
                       }}
                       className="flex items-center gap-1.5 text-xs text-white font-bold bg-red-600 hover:bg-red-700 border-none px-3 py-1.5 rounded-lg cursor-pointer shadow-sm transition-colors"
                     >
@@ -4130,7 +3850,7 @@ export const AdminDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* TAB: PROBLEMS */}
+
             {activeTab === 'problems' && (
               <div className="flex flex-col gap-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -4161,7 +3881,6 @@ export const AdminDashboard: React.FC = () => {
                       <option value="ALL">All Scopes</option>
                       <option value="PRACTICE">Practice</option>
                       <option value="CONTEST">Contest</option>
-                      <option value="SHARED">Share</option>
                     </select>
                     <button
                       onClick={handleCreateProblemClick}
@@ -4182,7 +3901,7 @@ export const AdminDashboard: React.FC = () => {
                       }`}
                   >
                     <span className="material-symbols-outlined text-[16px]">folder_open</span>
-                    All Problems ({problems.length})
+                    All Problems ({problems.filter(p => !p.isDeleted).length})
                   </button>
                   <button
                     onClick={() => setProblemSubTab('practice')}
@@ -4192,7 +3911,7 @@ export const AdminDashboard: React.FC = () => {
                       }`}
                   >
                     <span className="material-symbols-outlined text-[16px]">terminal</span>
-                    Practice Problems ({problems.filter(p => p.problemScope === 'PRACTICE' && p.isPublic).length})
+                    Practice Problems ({problems.filter(p => p.problemScope === 'PRACTICE' && p.isPublic && !p.isDeleted).length})
                   </button>
                   <button
                     onClick={() => setProblemSubTab('contest')}
@@ -4202,18 +3921,9 @@ export const AdminDashboard: React.FC = () => {
                       }`}
                   >
                     <span className="material-symbols-outlined text-[16px]">emoji_events</span>
-                    Contest Problems ({problems.filter(p => p.problemScope === 'CONTEST' && p.isPublic).length})
+                    Contest Problems ({problems.filter(p => p.problemScope === 'CONTEST' && p.isPublic && !p.isDeleted).length})
                   </button>
-                  <button
-                    onClick={() => setProblemSubTab('shared')}
-                    className={`pb-2.5 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${problemSubTab === 'shared'
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-slate-500 hover:text-primary'
-                      }`}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">share</span>
-                    Shared Problems ({problems.filter(p => p.problemScope === 'SHARED' && p.isPublic).length})
-                  </button>
+
                   <button
                     onClick={() => setProblemSubTab('draft')}
                     className={`pb-2.5 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${problemSubTab === 'draft'
@@ -4222,7 +3932,17 @@ export const AdminDashboard: React.FC = () => {
                       }`}
                   >
                     <span className="material-symbols-outlined text-[16px]">edit_document</span>
-                    Draft Problems ({problems.filter(p => !p.isPublic).length})
+                    Draft Problems ({problems.filter(p => !p.isPublic && !p.isDeleted).length})
+                  </button>
+                  <button
+                    onClick={() => setProblemSubTab('deleted')}
+                    className={`pb-2.5 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${problemSubTab === 'deleted'
+                      ? 'border-red-500 text-red-600'
+                      : 'border-transparent text-slate-500 hover:text-red-500'
+                      }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">delete</span>
+                    Deleted Problems ({problems.filter(p => p.isDeleted).length})
                   </button>
                 </div>
 
@@ -4235,13 +3955,23 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                     <div className="flex gap-2">
                       <button 
-                        onClick={() => triggerConfirm("Bulk Publish", `Publish ${selectedProblems.length} selected problems?`, () => {
-                          Promise.all(selectedProblems.map(id => adminService.updateProblemPublicStatus(id, true))).then(() => {
-                            showGlobalToast(`Published ${selectedProblems.length} problems`, "success");
-                            setSelectedProblems([]);
-                            loadData();
-                          }).catch(() => showGlobalToast("Failed to publish some problems", "error"));
-                        })}
+                        onClick={() => {
+                          const problemWithoutTestcase = selectedProblems.find(id => {
+                            const p = problems.find(prob => prob.id === id);
+                            return p && p.totalTestcases === 0;
+                          });
+                          if (problemWithoutTestcase) {
+                            showGlobalToast("Cannot publish problems without testcases. Please add testcases first.", "error");
+                            return;
+                          }
+                          triggerConfirm("Bulk Publish", `Publish ${selectedProblems.length} selected problems?`, () => {
+                            Promise.all(selectedProblems.map(id => adminService.updateProblemPublicStatus(id, true))).then(() => {
+                              showGlobalToast(`Published ${selectedProblems.length} problems`, "success");
+                              setSelectedProblems([]);
+                              loadData();
+                            }).catch(() => showGlobalToast("Failed to publish some problems", "error"));
+                          });
+                        }}
                         className="bg-white border border-blue-200 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
                       >
                         <span className="material-symbols-outlined text-[16px]">public</span> Publish
@@ -4261,34 +3991,35 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                   </div>
                 )}
-                <div className="bg-surface rounded-2xl border border-slate-200/50 overflow-hidden ambient-shadow">
-                  <div className="overflow-x-auto">
+                <div className="bg-surface rounded-2xl border border-slate-200/50 overflow-visible ambient-shadow">
+                  <div className="overflow-x-auto min-h-[280px]">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50 text-xs font-black text-text-muted border-b border-slate-100 uppercase tracking-wider">
-                          <th className="py-4 px-6 w-12 text-center">
+                          <th className="py-4 px-3 w-12 text-center">
                             <input 
                               type="checkbox" 
                               className="w-4 h-4 rounded text-brand-blue border-slate-300 focus:ring-brand-blue"
-                              checked={paginatedProblems.length > 0 && selectedProblems.length === paginatedProblems.length}
+                              disabled={paginatedProblems.every(p => p.isDeleted)}
+                              checked={paginatedProblems.filter(p => !p.isDeleted).length > 0 && selectedProblems.length === paginatedProblems.filter(p => !p.isDeleted).length}
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  setSelectedProblems(paginatedProblems.map(p => p.id));
+                                  setSelectedProblems(paginatedProblems.filter(p => !p.isDeleted).map(p => p.id));
                                 } else {
                                   setSelectedProblems([]);
                                 }
                               }}
                             />
                           </th>
-                          <th className="py-4 px-6">ID</th>
-                          <th className="py-4 px-6">Title</th>
-                          <th className="py-4 px-6">Difficulty</th>
-                          <th className="py-4 px-6 text-right">Submissions</th>
-                          <th className="py-4 px-6 text-right">Accepted Rate</th>
-                          <th className="py-4 px-6 text-center">Testcases</th>
-                          <th className="py-4 px-6 text-center">Scope</th>
-                          <th className="py-4 px-6 text-center">Status</th>
-                          <th className="py-4 px-6 text-center">Actions</th>
+                          <th className="py-4 px-3">ID</th>
+                          <th className="py-4 px-3">Title</th>
+                          <th className="py-4 px-3">Difficulty</th>
+                          <th className="py-4 px-3 text-right">Submissions</th>
+                          <th className="py-4 px-3 text-right">Accepted Rate</th>
+                          <th className="py-4 px-3 text-center">Testcases</th>
+                          <th className="py-4 px-3 text-center">Scope</th>
+                          <th className="py-4 px-3 text-center">Status</th>
+                          <th className="py-4 px-3 text-center">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="text-xs font-semibold text-slate-700 divide-y divide-slate-100">
@@ -4300,10 +4031,11 @@ export const AdminDashboard: React.FC = () => {
 
                           return (
                             <tr key={p.id} className={`hover:bg-slate-50/50 transition-colors ${selectedProblems.includes(p.id) ? 'bg-blue-50/30' : ''}`}>
-                              <td className="py-4 px-6 text-center">
+                              <td className="py-4 px-3 text-center">
                                 <input 
                                   type="checkbox" 
                                   className="w-4 h-4 rounded text-brand-blue border-slate-300 focus:ring-brand-blue"
+                                  disabled={p.isDeleted}
                                   checked={selectedProblems.includes(p.id)}
                                   onChange={(e) => {
                                     if (e.target.checked) {
@@ -4314,17 +4046,17 @@ export const AdminDashboard: React.FC = () => {
                                   }}
                                 />
                               </td>
-                              <td className="py-4 px-6 text-brand-blue font-bold">#{p.id}</td>
-                              <td className="py-4 px-6 font-bold text-slate-900">{p.title}</td>
-                              <td className="py-4 px-6">
+                              <td className="py-4 px-3 text-brand-blue font-bold">#{p.id}</td>
+                              <td className="py-4 px-3 font-bold text-slate-900">{p.title}</td>
+                              <td className="py-4 px-3">
                                 <span className={`px-2.5 py-0.5 rounded-md font-bold text-[10px] ${p.difficulty === 'EASY' ? 'bg-emerald-50 text-emerald-600' :
                                   p.difficulty === 'MEDIUM' ? 'bg-blue-50 text-blue-600' : 'bg-red-50 text-red-600'
                                   }`}>{p.difficulty}</span>
                               </td>
-                              <td className="py-4 px-6 text-right font-mono font-bold text-slate-600">
+                              <td className="py-4 px-3 text-right font-mono font-bold text-slate-600">
                                 {totalSubs.toLocaleString()}
                               </td>
-                              <td className="py-4 px-6 text-right font-mono font-bold text-slate-800">
+                              <td className="py-4 px-3 text-right font-mono font-bold text-slate-800">
                                 <div className="flex flex-col items-end gap-1.5">
                                   <span>{acceptedRate}%</span>
                                   <div className="w-16 h-1 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
@@ -4335,14 +4067,15 @@ export const AdminDashboard: React.FC = () => {
                                   </div>
                                 </div>
                               </td>
-                              <td className="py-4 px-6 text-center">
+                              <td className="py-4 px-3 text-center">
                                 <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold border border-slate-200">
                                   {p.totalTestcases || 0}
                                 </span>
                               </td>
-                              <td className="py-4 px-6 text-center">
+                              <td className="py-4 px-3 text-center">
                                 <select
                                   value={p.problemScope}
+                                  disabled={p.isDeleted}
                                   onChange={(e) => {
                                     const newScope = e.target.value as any;
                                     triggerConfirm(
@@ -4351,53 +4084,99 @@ export const AdminDashboard: React.FC = () => {
                                       () => handleUpdateProblemScope(p.id, newScope)
                                     );
                                   }}
-                                  className={`border rounded-lg pl-2.5 pr-8 py-1 text-xs font-bold focus:ring-0 outline-none cursor-pointer ${p.problemScope === 'PRACTICE'
+                                  className={`border rounded-lg pl-2.5 pr-8 py-1 text-xs font-bold focus:ring-0 outline-none cursor-pointer ${
+                                    p.isDeleted ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed opacity-70' :
+                                    p.problemScope === 'PRACTICE'
                                     ? 'bg-green-50 text-green-600 border-green-200'
                                     : p.problemScope === 'CONTEST'
                                       ? 'bg-blue-50 text-blue-600 border-blue-200'
-                                      : 'bg-orange-50 text-orange-600 border-orange-200'
+                                      : 'bg-slate-50 text-slate-600 border-slate-200'
                                     }`}
                                 >
                                   <option value="PRACTICE" className="bg-white text-green-600 font-bold">Practice</option>
                                   <option value="CONTEST" className="bg-white text-blue-600 font-bold">Contest</option>
-                                  <option value="SHARED" className="bg-white text-orange-600 font-bold">Share</option>
                                 </select>
                               </td>
-                              <td className="py-4 px-6 text-center">
-                                <select
-                                  value={p.isPublic ? "PUBLIC" : "PRIVATE"}
-                                  onChange={(e) => {
-                                    const isPublic = e.target.value === "PUBLIC";
-                                    triggerConfirm(
-                                      "Change Publish Status",
-                                      `Are you sure you want to make this problem ${isPublic ? "public" : "private"}?`,
-                                      () => handleUpdateProblemPublicStatus(p.id, isPublic)
-                                    );
-                                  }}
-                                  className={`border rounded-lg pl-2.5 pr-8 py-1 text-xs font-bold outline-none cursor-pointer ${p.isPublic
-                                    ? "bg-emerald-50 border-emerald-250 text-emerald-600"
-                                    : "bg-slate-100 border-slate-200 text-slate-600"
-                                    }`}
-                                >
-                                  <option value="PUBLIC" className="bg-white text-emerald-600 font-bold">Public</option>
-                                  <option value="PRIVATE" className="bg-white text-slate-600 font-bold">Private</option>
-                                </select>
+                              <td className="py-4 px-3 text-center">
+                                {p.isDeleted ? (
+                                  <span className="inline-block border rounded-lg px-2.5 py-1 text-xs font-bold bg-red-50 border-red-200 text-red-600">
+                                    DELETED
+                                  </span>
+                                ) : (
+                                  <select
+                                    value={p.isPublic ? "PUBLIC" : "PRIVATE"}
+                                    onChange={(e) => {
+                                      const isPublic = e.target.value === "PUBLIC";
+                                      if (isPublic && p.totalTestcases === 0) {
+                                        showGlobalToast("Cannot make problem public. It must have at least one testcase.", "error");
+                                        return;
+                                      }
+                                      triggerConfirm(
+                                        "Change Publish Status",
+                                        `Are you sure you want to make this problem ${isPublic ? "public" : "private"}?`,
+                                        () => handleUpdateProblemPublicStatus(p.id, isPublic)
+                                      );
+                                    }}
+                                    className={`border rounded-lg pl-2.5 pr-8 py-1 text-xs font-bold outline-none cursor-pointer ${p.isPublic
+                                      ? "bg-emerald-50 border-emerald-250 text-emerald-600"
+                                      : "bg-slate-100 border-slate-200 text-slate-600"
+                                      }`}
+                                  >
+                                    <option value="PUBLIC" className="bg-white text-emerald-600 font-bold">Public</option>
+                                    <option value="PRIVATE" className="bg-white text-slate-600 font-bold">Private</option>
+                                  </select>
+                                )}
                               </td>
-                              <td className="py-4 px-6 text-center">
-                                <div className="flex items-center justify-center gap-2">
-                                  <button
-                                    onClick={() => handleEditProblemClick(p)}
-                                    className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 shadow-sm border-none cursor-pointer"
-                                  >
-                                    <span className="material-symbols-outlined text-[14px]">edit</span> Edit
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteProblemClick(p.id)}
-                                    className="bg-rose-500 hover:bg-rose-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 shadow-sm border-none cursor-pointer"
-                                  >
-                                    <span className="material-symbols-outlined text-[14px]">delete</span> Delete
-                                  </button>
-                                </div>
+                              <td className="py-4 px-3 text-center">
+                                {p.isDeleted ? (
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => setSelectedProblemForView(p)}
+                                      className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 shadow-sm border-none cursor-pointer"
+                                      title="View Problem Details"
+                                    >
+                                      <span className="material-symbols-outlined text-[14px]">visibility</span> View
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => handleEditProblemClick(p)}
+                                      className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 shadow-sm border-none cursor-pointer"
+                                    >
+                                      <span className="material-symbols-outlined text-[14px]">edit</span> Edit
+                                    </button>
+                                    
+                                    <div className="relative group">
+                                      <button className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold p-1 rounded-lg transition-all flex items-center shadow-sm border-none cursor-pointer">
+                                        <span className="material-symbols-outlined text-[18px]">more_vert</span>
+                                      </button>
+                                      
+                                      {/* Dropdown Menu */}
+                                      <div className="absolute right-0 top-full mt-1 w-32 bg-white rounded-xl shadow-lg border border-slate-100 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 flex flex-col overflow-hidden">
+                                        <button
+                                          onClick={() => handleViewProblemHistory(p.id)}
+                                          className="flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-indigo-600 font-bold text-left transition-colors w-full border-none cursor-pointer"
+                                        >
+                                          <span className="material-symbols-outlined text-[14px]">history</span> History
+                                        </button>
+                                        <button
+                                          onClick={() => handleCloneProblem(p.id)}
+                                          className="flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-teal-600 font-bold text-left transition-colors w-full border-none cursor-pointer"
+                                        >
+                                          <span className="material-symbols-outlined text-[14px]">content_copy</span> Clone
+                                        </button>
+                                        <div className="h-px bg-slate-100 w-full m-0"></div>
+                                        <button
+                                          onClick={() => handleDeleteProblemClick(p.id)}
+                                          className="flex items-center gap-2 px-3 py-2 text-xs text-rose-500 hover:bg-rose-50 font-bold text-left transition-colors w-full border-none cursor-pointer"
+                                        >
+                                          <span className="material-symbols-outlined text-[14px]">delete</span> Delete
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           );
@@ -4430,8 +4209,12 @@ export const AdminDashboard: React.FC = () => {
                           {Array.from({ length: Math.min(5, totalProblemPages) }).map((_, i) => {
                             let pageNum = i + 1;
                             if (totalProblemPages > 5) {
-                              if (safeProblemPage > 3) pageNum = safeProblemPage - 2 + i;
-                              if (pageNum > totalProblemPages) pageNum = totalProblemPages - (4 - i);
+                              let startPage = Math.max(1, safeProblemPage - 2);
+                              let endPage = Math.min(totalProblemPages, startPage + 4);
+                              if (endPage - startPage < 4) {
+                                startPage = Math.max(1, endPage - 4);
+                              }
+                              pageNum = startPage + i;
                             }
                             return (
                               <button
@@ -4462,8 +4245,6 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               </div>
             )}
-
-            {/* TAB: CONTEST */}
             {activeTab === 'contest' && (
               <div className="flex flex-col gap-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -4475,6 +4256,7 @@ export const AdminDashboard: React.FC = () => {
                         onClick={() => {
                           setContestSubTab('active');
                           setContestStatusFilter('ALL');
+                          setContestPage(1);
                         }}
                         className={`pb-2 text-xs font-bold transition-all px-2 cursor-pointer border-b-2 ${
                           contestSubTab === 'active' ? 'border-primary text-primary font-black' : 'border-transparent text-slate-400 hover:text-slate-600'
@@ -4486,12 +4268,13 @@ export const AdminDashboard: React.FC = () => {
                         onClick={() => {
                           setContestSubTab('trash');
                           setContestStatusFilter('ALL');
+                          setContestPage(1);
                         }}
                         className={`pb-2 text-xs font-bold transition-all px-2 cursor-pointer border-b-2 ${
                           contestSubTab === 'trash' ? 'border-primary text-primary font-black' : 'border-transparent text-slate-400 hover:text-slate-600'
                         }`}
                       >
-                        Thùng rác (Trash)
+                        Trash
                       </button>
                     </div>
                   </div>
@@ -4500,7 +4283,10 @@ export const AdminDashboard: React.FC = () => {
                     {contestSubTab === 'active' && (
                       <select
                         value={contestStatusFilter}
-                        onChange={(e) => setContestStatusFilter(e.target.value as any)}
+                        onChange={(e) => {
+                          setContestStatusFilter(e.target.value as any);
+                          setContestPage(1);
+                        }}
                         className="text-xs bg-surface border border-slate-200 rounded-xl pl-3 pr-8 py-1.5 focus:ring-primary focus:border-primary cursor-pointer"
                       >
                         <option value="ALL">All Status</option>
@@ -4581,7 +4367,13 @@ export const AdminDashboard: React.FC = () => {
                                     </button>
                                     {(c.status === 'UPCOMING' || c.status === 'DRAFT') && (
                                       <button
-                                        onClick={() => handleDeleteContest(c.id)}
+                                        onClick={() => {
+                                          triggerConfirm(
+                                            "Move Contest to Trash",
+                                            "Are you sure you want to move this contest to trash?",
+                                            () => handleDeleteContest(c.id)
+                                          );
+                                        }}
                                         className="bg-red-500 hover:bg-red-600 text-white font-bold text-[10px] px-3 py-1.5 rounded-xl transition-all shadow-sm border-none cursor-pointer"
                                       >
                                         Delete
@@ -4599,9 +4391,11 @@ export const AdminDashboard: React.FC = () => {
                                     {c.submissionCount === 0 ? (
                                       <button
                                         onClick={() => {
-                                          if (window.confirm("Are you sure you want to permanently delete this contest? This cannot be undone.")) {
-                                            handleHardDeleteContest(c.id);
-                                          }
+                                          triggerConfirm(
+                                            "Permanently Delete Contest",
+                                            "Are you sure you want to permanently delete this contest? This action is irreversible.",
+                                            () => handleHardDeleteContest(c.id)
+                                          );
                                         }}
                                         className="bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-xl transition-all shadow-sm border-none cursor-pointer"
                                       >
@@ -4630,6 +4424,59 @@ export const AdminDashboard: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Pagination Controls */}
+                  {totalContestPages > 1 && (
+                    <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50">
+                      <span className="text-xs font-semibold text-slate-500">
+                        Showing {(safeContestPage - 1) * contestSize + 1} to {Math.min(safeContestPage * contestSize, totalContestsCount)} of {totalContestsCount} entries
+                      </span>
+                      <div className="flex gap-1">
+                        <button 
+                          onClick={() => setContestPage(p => Math.max(1, p - 1))}
+                          disabled={safeContestPage === 1}
+                          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-white disabled:opacity-50 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                        </button>
+                        
+                        <div className="flex gap-1">
+                          {Array.from({ length: Math.min(5, totalContestPages) }).map((_, i) => {
+                            let pageNum = i + 1;
+                            if (totalContestPages > 5) {
+                              let startPage = Math.max(1, safeContestPage - 2);
+                              let endPage = Math.min(totalContestPages, startPage + 4);
+                              if (endPage - startPage < 4) {
+                                startPage = Math.max(1, endPage - 4);
+                              }
+                              pageNum = startPage + i;
+                            }
+                            return (
+                              <button
+                                key={pageNum}
+                                onClick={() => setContestPage(pageNum)}
+                                className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
+                                  safeContestPage === pageNum 
+                                    ? 'bg-brand-blue text-white shadow-sm' 
+                                    : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        
+                        <button 
+                          onClick={() => setContestPage(p => Math.min(totalContestPages, p + 1))}
+                          disabled={safeContestPage === totalContestPages}
+                          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-white disabled:opacity-50 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -4686,7 +4533,12 @@ export const AdminDashboard: React.FC = () => {
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-3">
                                 <img src={`https://ui-avatars.com/api/?name=${ins.fullName}&background=F36F21&color=fff`} className="w-8 h-8 rounded-full object-cover border border-slate-100" alt="" />
-                                <span className="font-bold text-slate-900">{ins.fullName}</span>
+                                <button
+                                  onClick={() => setSelectedInstructorDetail(ins)}
+                                  className="font-bold text-slate-900 hover:text-primary hover:underline bg-transparent border-none p-0 cursor-pointer text-left"
+                                >
+                                  {ins.fullName}
+                                </button>
                               </div>
                             </td>
                             <td className="py-4 px-6 text-slate-500 font-extrabold">{ins.major}</td>
@@ -4704,21 +4556,29 @@ export const AdminDashboard: React.FC = () => {
                               </span>
                             </td>
                             <td className="py-4 px-6 text-right">
-                              {ins.status === 'SUSPENDED' ? (
+                              <div className="flex justify-end gap-3 items-center">
                                 <button
-                                  onClick={() => handleInstructorStatusChange(ins.id, 'ACTIVE')}
-                                  className="text-emerald-600 hover:text-emerald-800 hover:underline bg-transparent border-none cursor-pointer font-bold"
+                                  onClick={() => setSelectedInstructorDetail(ins)}
+                                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-xl transition-all duration-200 shadow-sm cursor-pointer border-none"
                                 >
-                                  Activate
+                                  View
                                 </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleInstructorStatusChange(ins.id, 'SUSPENDED')}
-                                  className="text-red-500 hover:text-red-700 hover:underline bg-transparent border-none cursor-pointer font-bold"
-                                >
-                                  Suspend
-                                </button>
-                              )}
+                                {ins.status === 'SUSPENDED' ? (
+                                  <button
+                                    onClick={() => handleInstructorStatusChange(ins.id, 'ACTIVE')}
+                                    className="text-emerald-600 hover:text-emerald-800 hover:underline bg-transparent border-none cursor-pointer font-bold text-xs"
+                                  >
+                                    Activate
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleInstructorStatusChange(ins.id, 'SUSPENDED')}
+                                    className="text-red-500 hover:text-red-700 hover:underline bg-transparent border-none cursor-pointer font-bold text-xs"
+                                  >
+                                    Suspend
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -4794,34 +4654,51 @@ export const AdminDashboard: React.FC = () => {
                                 title={u.isOnline ? 'Online' : 'Offline'}
                               ></span>
                             </td>
-                            <td className="py-4 px-6 font-bold text-slate-900">{u.name}</td>
+                            <td className="py-4 px-6">
+                              <button
+                                onClick={() => setSelectedUserDetail(u)}
+                                className="font-bold text-slate-900 hover:text-primary hover:underline bg-transparent border-none p-0 cursor-pointer text-left"
+                              >
+                                {u.name}
+                              </button>
+                            </td>
                             <td className="py-4 px-6">{u.email}</td>
                             <td className="py-4 px-6">{new Date(u.registerDate).toLocaleDateString()}</td>
                             <td className="py-4 px-6 font-bold text-slate-800">{u.balance.toLocaleString()} ₫</td>
                             <td className="py-4 px-6 text-emerald-600 font-bold">+{u.totalDeposited.toLocaleString()} ₫</td>
                             <td className="py-4 px-6">
-                              <select
-                                value={u.status}
-                                onChange={(e) => handleUserStatusChange(u.id, e.target.value as 'ACTIVE' | 'LOCKED')}
-                                className={`border rounded-lg pl-2.5 pr-8 py-1.5 text-xs font-bold focus:ring-0 outline-none cursor-pointer ${
-                                  u.status === 'ACTIVE'
-                                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-                                    : 'bg-red-50 text-red-600 border-red-200'
-                                }`}
-                              >
-                                <option value="ACTIVE" className="bg-white text-emerald-600 font-bold">ACTIVE</option>
-                                <option value="LOCKED" className="bg-white text-red-600 font-bold">LOCKED</option>
-                              </select>
+                              <span className={`inline-block font-bold rounded-lg px-2.5 py-1 text-[11px] border ${
+                                u.status === 'ACTIVE'
+                                  ? 'bg-emerald-50 text-emerald-600 border-emerald-200/30'
+                                  : 'bg-red-50 text-red-500 border-red-200/30'
+                              }`}>
+                                {u.status}
+                              </span>
                             </td>
                             <td className="py-4 px-6 text-right">
-                              {u.status === 'LOCKED' && (
+                              <div className="flex justify-end gap-2">
                                 <button
-                                  onClick={() => handleUserStatusChange(u.id, 'ACTIVE')}
-                                  className="text-[10px] bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-2.5 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer border-none"
+                                  onClick={() => setSelectedUserDetail(u)}
+                                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-xl transition-all duration-200 shadow-sm cursor-pointer border-none"
                                 >
-                                  Unlock
+                                  View
                                 </button>
-                              )}
+                                {u.status === 'LOCKED' ? (
+                                  <button
+                                    onClick={() => handleUserStatusChange(u.id, 'ACTIVE')}
+                                    className="text-xs bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-3 py-1.5 rounded-xl transition-all duration-200 shadow-sm cursor-pointer border-none"
+                                  >
+                                    Unlock
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleUserStatusChange(u.id, 'LOCKED')}
+                                    className="text-xs bg-red-500 hover:bg-red-600 text-white font-bold px-3 py-1.5 rounded-xl transition-all duration-200 shadow-sm cursor-pointer border-none"
+                                  >
+                                    Lock
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -5415,388 +5292,79 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ================= MODAL: CREATE OR EDIT PROBLEM ================= */}
-      {(isCreateProblemOpen || isEditProblemOpen) && (
-        <div className="fixed inset-0 bg-brand-blue/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-5xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="bg-brand-blue px-6 py-4 flex items-center justify-between shrink-0">
-              <h2 className="text-white font-display font-black text-xl flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary">code</span>
-                {isEditProblemOpen ? "Edit Programming Problem" : "Create Programming Problem"}
-              </h2>
-              <button 
-                type="button" 
-                onClick={() => {
-                  setIsCreateProblemOpen(false);
-                  setIsEditProblemOpen(false);
-                  setEditingProblemId(null);
-                  setNewProbTitle('');
-                  setNewProbDesc('');
-                  setNewProbInputDesc('');
-                  setNewProbOutputDesc('');
-                  setNewProbConstraints('');
-                  setNewProbExampleInput('');
-                  setNewProbExampleOutput('');
-                  setNewProbHints(['']);
-                  setNewProbScope('PRACTICE');
-                  setNewProbDifficulty('MEDIUM');
-                  setNewProbScore(100);
-                  setNewProbTimeLimit(2000);
-                  setNewProbMemoryLimit(128000);
-                  setNewProbIsPublic(false);
-                  setNewProbSolutions('');
-                  setNewProbTags([]);
-                  setNewProbStarterC('');
-                  setNewProbStarterCpp('');
-                  setNewProbStarterJava('');
-                  setNewProbStarterPython('');
-                  setNewProbStarterCsharp('');
-                  setStarterActiveTab('C');
-                  setTestcasesList([]);
-                }} 
-                className="text-white/60 hover:text-white transition-colors"
-              >
-                <span className="material-symbols-outlined text-2xl">close</span>
-              </button>
+
+      {/* ================= MODAL: INSTRUCTOR DETAILS VIEW ================= */}
+      {selectedInstructorDetail && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-surface rounded-2xl border border-slate-200/50 shadow-2xl max-w-lg w-full p-6 animate-fade-in text-left bg-white">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">Instructor Profile</span>
+                <h3 className="font-display font-black text-xl text-brand-blue mt-1.5">{selectedInstructorDetail.fullName}</h3>
+                <p className="text-xs text-primary font-bold mt-0.5">{selectedInstructorDetail.major}</p>
+              </div>
+              <button onClick={() => setSelectedInstructorDetail(null)} className="material-symbols-outlined text-slate-400 hover:text-slate-600 transition-colors border-none bg-transparent cursor-pointer">close</button>
             </div>
 
-            <form onSubmit={isEditProblemOpen ? handleEditProblemSubmit : handleCreateProblemSubmit} className="p-6 overflow-y-auto flex flex-col gap-6">
-              
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Problem Title *</label>
-                <input required type="text" value={newProbTitle} onChange={e => setNewProbTitle(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue" placeholder="e.g. Two Sum" />
+            <div className="flex flex-col gap-4 text-xs">
+              <div className="flex flex-col gap-1">
+                <span className="font-bold text-text-muted uppercase text-[10px]">Biography / Introduction</span>
+                <p className="bg-slate-50 border border-slate-100 p-3 rounded-xl text-slate-700 font-medium whitespace-pre-wrap leading-relaxed">
+                  {selectedInstructorDetail.bio || "No biography provided."}
+                </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Difficulty Level</label>
-                  <div className="flex p-1 bg-slate-100/80 rounded-xl border border-slate-200/50 shadow-inner">
-                    {['EASY', 'MEDIUM', 'HARD'].map(diff => {
-                      const isSelected = newProbDifficulty === diff;
-                      let textColor = 'text-brand-blue';
-                      if (isSelected) {
-                        if (diff === 'EASY') textColor = 'text-emerald-600';
-                        if (diff === 'MEDIUM') textColor = 'text-amber-500';
-                        if (diff === 'HARD') textColor = 'text-rose-600';
-                      }
-                      return (
-                        <label key={diff} className={`flex-1 flex items-center justify-center py-2 rounded-lg cursor-pointer transition-all duration-300 text-[13px] font-bold tracking-wide ${isSelected ? `bg-white ${textColor} shadow-sm ring-1 ring-black/5` : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}>
-                          <input type="radio" name="probDifficulty" value={diff} checked={isSelected} onChange={() => setNewProbDifficulty(diff as any)} className="hidden" />
-                          {diff}
-                        </label>
-                      );
-                    })}
-                  </div>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                  <span className="block text-[10px] text-text-muted font-bold uppercase">Courses</span>
+                  <span className="block text-base font-black text-slate-900 mt-1">{selectedInstructorDetail.coursesCount}</span>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Scope</label>
-                  <div className="flex p-1 bg-slate-100/80 rounded-xl border border-slate-200/50 shadow-inner">
-                    {['PRACTICE', 'CONTEST', 'SHARED'].map(sc => {
-                      const isSelected = newProbScope === sc;
-                      return (
-                        <label key={sc} className={`flex-1 flex items-center justify-center py-2 rounded-lg cursor-pointer transition-all duration-300 text-[13px] font-bold tracking-wide ${isSelected ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}>
-                          <input type="radio" name="probScope" value={sc} checked={isSelected} onChange={() => setNewProbScope(sc as any)} className="hidden" />
-                          {sc}
-                        </label>
-                      );
-                    })}
-                  </div>
+                <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                  <span className="block text-[10px] text-text-muted font-bold uppercase">Rating</span>
+                  <span className="block text-base font-black text-orange-500 mt-1">★ {selectedInstructorDetail.rating}</span>
+                </div>
+                <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                  <span className="block text-[10px] text-text-muted font-bold uppercase">Students</span>
+                  <span className="block text-base font-black text-slate-900 mt-1">{selectedInstructorDetail.studentsCount}</span>
                 </div>
               </div>
 
-              {allTags.length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Problem Tags</label>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {allTags.map(tag => {
-                      const isSelected = newProbTags.includes(tag.name);
-                      return (
-                        <button
-                          key={tag.id}
-                          type="button"
-                          onClick={() => {
-                            if (isSelected) {
-                              setNewProbTags(newProbTags.filter(t => t !== tag.name));
-                            } else {
-                              setNewProbTags([...newProbTags, tag.name]);
-                            }
-                          }}
-                          className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${isSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-600 font-extrabold shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:shadow-sm'}`}
-                        >
-                          {tag.name}
-                        </button>
-                      );
-                    })}
-                  </div>
+              <div className="flex justify-between items-center bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                <div>
+                  <span className="block text-[10px] text-text-muted font-bold uppercase">Account Status</span>
+                  <span className={`inline-block font-bold rounded-lg px-2.5 py-0.5 text-[11px] border mt-1 ${
+                    selectedInstructorDetail.status === 'ACTIVE'
+                      ? 'bg-emerald-50 text-emerald-600 border-emerald-200/30'
+                      : 'bg-red-50 text-red-500 border-red-200/30'
+                  }`}>
+                    {selectedInstructorDetail.status === 'ACTIVE' ? 'Active' : 'Suspended'}
+                  </span>
                 </div>
-              )}
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Problem Description (Markdown) *</label>
-                <textarea required value={newProbDesc} onChange={e => setNewProbDesc(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue resize-y h-32" placeholder="Explain the problem here..." />
-              </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Input Description *</label>
-                    <textarea rows={2} value={newProbInputDesc} onChange={e => setNewProbInputDesc(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue" placeholder="Describe input structure..." />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Output Description *</label>
-                    <textarea rows={2} value={newProbOutputDesc} onChange={e => setNewProbOutputDesc(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue" placeholder="Describe output structure..." />
-                  </div>
-                </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Constraints *</label>
-                <textarea rows={2} value={newProbConstraints} onChange={e => setNewProbConstraints(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue" placeholder="e.g. 1 <= nums.length <= 10^5" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Example Input *</label>
-                  <textarea rows={2} value={newProbExampleInput} onChange={e => setNewProbExampleInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue" placeholder="Input sample..." />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Example Output *</label>
-                  <textarea rows={2} value={newProbExampleOutput} onChange={e => setNewProbExampleOutput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue" placeholder="Output sample..." />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Max Score *</label>
-                  <input type="number" value={newProbScore} onChange={e => setNewProbScore(Number(e.target.value))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Time Limit (ms) *</label>
-                  <input type="number" value={newProbTimeLimit} onChange={e => setNewProbTimeLimit(Number(e.target.value))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Memory Limit (KB) *</label>
-                  <input type="number" value={newProbMemoryLimit} onChange={e => setNewProbMemoryLimit(Number(e.target.value))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue" />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Hints</label>
+                {selectedInstructorDetail.status === 'SUSPENDED' ? (
                   <button
-                    type="button"
-                    onClick={() => setNewProbHints(prev => [...prev, ''])}
-                    className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                    onClick={() => {
+                      handleInstructorStatusChange(selectedInstructorDetail.id, 'ACTIVE');
+                    }}
+                    className="text-xs bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-3 py-1.5 rounded-xl transition-all duration-200 shadow-sm cursor-pointer border-none animate-fade-in"
                   >
-                    <span className="material-symbols-outlined text-[14px]">add</span> Add Hint
+                    Activate
                   </button>
-                </div>
-                {newProbHints.map((hint, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={hint}
-                      onChange={e => setNewProbHints(prev => prev.map((h, i) => i === idx ? e.target.value : h))}
-                      className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-primary focus:border-primary text-brand-blue"
-                      placeholder={`Hint ${idx + 1}...`}
-                    />
-                    {newProbHints.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setNewProbHints(prev => prev.filter((_, i) => i !== idx))}
-                        className="text-slate-400 hover:text-red-500 transition-colors p-2"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">delete</span>
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* TESTCASES SECTION */}
-              <div className="flex flex-col gap-4 mt-4 border-t border-slate-200 pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <h4 className="font-display font-black text-lg text-brand-blue uppercase tracking-wider">Test Cases *</h4>
-                    <div className="flex bg-slate-100 rounded-lg p-1 shadow-inner">
-                      <button 
-                        type="button" 
-                        onClick={() => setTestCaseGenerationMode('manual')}
-                        className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all duration-300 ${testCaseGenerationMode === 'manual' ? 'bg-white text-primary shadow-sm transform scale-100' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
-                      >
-                        Manual Input
-                      </button>
-                      <button 
-                        type="button" 
-                        onClick={() => setTestCaseGenerationMode('generate')}
-                        className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all duration-300 flex items-center gap-1 ${testCaseGenerationMode === 'generate' ? 'bg-gradient-to-r from-orange-100 to-orange-50 text-primary border border-orange-200 shadow-sm transform scale-100' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">auto_awesome</span> Auto Generate
-                      </button>
-                    </div>
-                  </div>
-                  {testCaseGenerationMode === 'manual' && (
-                    <button type="button" onClick={() => setTestcasesList(prev => [...prev, { problemId: editingProblemId || 0, inputData: '', expectedOutput: '', orderIndex: prev.length + 1 }])} className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
-                      <span className="material-symbols-outlined text-sm">add</span> Add Test Case
-                    </button>
-                  )}
-                </div>
-                
-                {testCaseGenerationMode === 'generate' ? (
-                  <div className="flex flex-col gap-4 bg-gradient-to-b from-slate-50 to-white border border-slate-200 rounded-xl p-5 shadow-sm animate-fade-in relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
-                    <div className="flex items-center justify-between relative z-10">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-orange-600">
-                          <span className="material-symbols-outlined text-sm">code_blocks</span>
-                        </div>
-                        <p className="text-xs font-medium text-slate-600">Write code to generate test cases. This code will run on the server.</p>
-                      </div>
-                      <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
-                        <label className="text-xs font-black text-brand-blue uppercase tracking-wider">Language:</label>
-                        <select 
-                          value={generatorLanguage}
-                          onChange={(e) => {
-                            setGeneratorLanguage(e.target.value);
-                            setGeneratorCode(GENERATOR_TEMPLATES[e.target.value] || '');
-                          }}
-                          className="bg-transparent text-sm font-bold text-primary focus:outline-none cursor-pointer"
-                        >
-                          <option value="c">C</option>
-                          <option value="cpp">C++</option>
-                          <option value="java">Java</option>
-                          <option value="python">Python</option>
-                          <option value="csharp">C#</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="w-full h-[320px] border border-slate-200 rounded-xl overflow-hidden shadow-inner bg-white relative group">
-                      <Editor
-                        height="100%"
-                        defaultLanguage={generatorLanguage === 'c' || generatorLanguage === 'cpp' ? 'cpp' : generatorLanguage === 'csharp' ? 'csharp' : generatorLanguage}
-                        language={generatorLanguage === 'c' || generatorLanguage === 'cpp' ? 'cpp' : generatorLanguage === 'csharp' ? 'csharp' : generatorLanguage}
-                        theme="vs-light"
-                        value={generatorCode}
-                        onChange={(value) => setGeneratorCode(value || '')}
-                        options={{
-                          minimap: { enabled: false },
-                          fontSize: 13,
-                          lineHeight: 24,
-                          padding: { top: 16, bottom: 16 },
-                          fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-                          scrollBeyondLastLine: false,
-                          smoothScrolling: true,
-                          cursorBlinking: "smooth",
-                          stickyScroll: { enabled: false },
-                          automaticLayout: true
-                        }}
-                      />
-                    </div>
-                    <div className="flex flex-col gap-3 relative z-10">
-                      <div className="flex justify-end items-center">
-                        <button 
-                          type="button" 
-                          onClick={handleRunAndGenerateTestcases} 
-                          disabled={generateLoading}
-                          className={`px-5 py-2.5 ${generateLoading ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-orange-500 to-primary hover:from-orange-600 hover:to-primary-dark hover:scale-[1.02] hover:-translate-y-0.5 shadow-md hover:shadow-lg'} text-white text-sm font-black rounded-xl transition-all duration-300 flex items-center gap-2`}
-                        >
-                          {generateLoading ? (
-                            <>
-                              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              Generating...
-                            </>
-                          ) : (
-                            <>
-                              <span className="material-symbols-outlined text-base">play_arrow</span>
-                              Run & Generate Testcases
-                            </>
-                          )}
-                        </button>
-                      </div>
-                      {generateError && (
-                        <div className="bg-red-50/80 backdrop-blur-sm border border-red-200 text-red-600 rounded-xl p-4 animate-fade-in shadow-sm relative overflow-hidden">
-                          <p className="text-xs font-black mb-1 flex items-center gap-1.5 uppercase tracking-wider">
-                            <span className="material-symbols-outlined text-[16px]">error</span> Generation Error
-                          </p>
-                          <pre className="text-[12px] whitespace-pre-wrap font-mono overflow-x-auto text-red-800 bg-white/50 p-3 rounded-lg mt-2 border border-red-100">{generateError}</pre>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : testcasesList.length === 0 ? (
-                  <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-xl">
-                    <p className="text-xs text-text-muted font-bold">No test cases added yet.</p>
-                  </div>
                 ) : (
-
-                  <div className="flex flex-col gap-4">
-                    {testcasesList.map((tc, idx) => (
-                      <div key={idx} className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
-                        <div className="flex items-start justify-between">
-                          <span className="font-display font-black text-brand-blue text-xs uppercase">Test Case {idx + 1}</span>
-                          <div className="flex items-center gap-3">
-                            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer">
-                              <input type="checkbox" checked={tc.isHidden} onChange={(e) => setTestcasesList(prev => prev.map((item, i) => i === idx ? { ...item, isHidden: e.target.checked } : item))} className="rounded text-primary focus:ring-primary" />
-                              Hidden
-                            </label>
-                            <button type="button" onClick={() => setTestcasesList(prev => prev.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-500 transition-colors">
-                              <span className="material-symbols-outlined text-sm">delete</span>
-                            </button>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Input</label>
-                            <textarea value={tc.inputData} onChange={(e) => setTestcasesList(prev => prev.map((item, i) => i === idx ? { ...item, inputData: e.target.value } : item))} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium focus:ring-primary focus:border-primary text-brand-blue resize-none h-16" placeholder="e.g. [1, 2, 3]" />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Expected Output</label>
-                            <textarea value={tc.expectedOutput || ''} onChange={(e) => setTestcasesList(prev => prev.map((item, i) => i === idx ? { ...item, expectedOutput: e.target.value } : item))} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium focus:ring-primary focus:border-primary text-brand-blue resize-none h-16" placeholder="e.g. [3, 2, 1]" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <button
+                    onClick={() => {
+                      handleInstructorStatusChange(selectedInstructorDetail.id, 'SUSPENDED');
+                    }}
+                    className="text-xs bg-red-500 hover:bg-red-600 text-white font-bold px-3 py-1.5 rounded-xl transition-all duration-200 shadow-sm cursor-pointer border-none animate-fade-in"
+                  >
+                    Suspend
+                  </button>
                 )}
               </div>
-
-              {/* Starter Templates */}
-              <div className="flex flex-col gap-1 border border-slate-200/60 rounded-2xl p-4 bg-slate-50/50 mt-4">
-                <div className="flex justify-between items-center mb-2">
-                  <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Starter Code Templates (Optional)</label>
-                  <div className="flex gap-1.5">
-                    {(['C', 'C++', 'Java', 'Python 3', 'C#'] as const).map(lang => (
-                      <button key={lang} type="button" onClick={() => setStarterActiveTab(lang)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${starterActiveTab === lang ? 'bg-primary text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                        {lang}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {starterActiveTab === 'C' && <textarea rows={8} value={newProbStarterC} onChange={e => setNewProbStarterC(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue resize-y" placeholder="void solve() {\n}" />}
-                {starterActiveTab === 'C++' && <textarea rows={8} value={newProbStarterCpp} onChange={e => setNewProbStarterCpp(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue resize-y" placeholder="class Solution {\npublic:\n    void solve() {\n    }\n};" />}
-                {starterActiveTab === 'Java' && <textarea rows={8} value={newProbStarterJava} onChange={e => setNewProbStarterJava(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue resize-y" placeholder="class Solution {\n    public void solve() {\n    }\n}" />}
-                {starterActiveTab === 'Python 3' && <textarea rows={8} value={newProbStarterPython} onChange={e => setNewProbStarterPython(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue resize-y" placeholder="class Solution:\n    def solve(self):\n        pass" />}
-                {starterActiveTab === 'C#' && <textarea rows={8} value={newProbStarterCsharp} onChange={e => setNewProbStarterCsharp(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue resize-y" placeholder="public class Solution {\n    public void Solve() {\n    }\n}" />}
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-brand-blue uppercase tracking-wider">Solution Code</label>
-                <textarea rows={12} value={newProbSolutions} onChange={e => setNewProbSolutions(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono focus:ring-primary focus:border-primary text-brand-blue resize-y" placeholder="Sample solution code..." />
-              </div>
-
-              <div className="flex items-center gap-3 mt-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <input type="checkbox" checked={newProbIsPublic} onChange={e => setNewProbIsPublic(e.target.checked)} className="rounded text-primary border-slate-300 w-5 h-5" />
-                <label className="text-sm font-bold text-brand-blue">Make this problem public immediately</label>
-              </div>
-
-              <div className="flex gap-4 mt-6">
-                <button type="submit" className="flex-1 bg-gradient-to-r from-primary to-primary-hover text-white font-black text-sm py-4 rounded-xl shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">
-                  {isEditProblemOpen ? "Save Problem & Testcases" : "Create Problem & Testcases"}
-                </button>
-              </div>
-
-            </form>
+            </div>
           </div>
         </div>
       )}
+
 
       {/* ================= MODAL: CREATE CONTEST ================= */}
       {isCreateContestOpen && (
@@ -6030,6 +5598,115 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* ================= MODAL: VIEW DELETED PROBLEM DETAILS ================= */}
+      {selectedProblemForView && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setSelectedProblemForView(null)}></div>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col relative z-10 animate-fade-in-up border border-slate-200 overflow-hidden">
+            {/* Header */}
+            <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-200 flex items-center justify-center text-slate-500">
+                  <span className="material-symbols-outlined">description</span>
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 tracking-tight">Problem Details</h2>
+                  <p className="text-sm font-semibold text-slate-500 mt-0.5">Read-only view for archived problem</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedProblemForView(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 hover:text-slate-900 transition-colors cursor-pointer border-none"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            
+            {/* Content */}
+            <div className="p-8 overflow-y-auto flex-1 bg-white custom-scrollbar text-left">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                
+                {/* Main Content */}
+                <div className="md:col-span-2 space-y-8">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-400 uppercase tracking-wider mb-2">Title</h3>
+                    <div className="text-xl font-bold text-slate-800">{selectedProblemForView.title}</div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-black text-slate-400 uppercase tracking-wider mb-2">Description</h3>
+                    <div className="prose prose-sm prose-slate max-w-none text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-100" dangerouslySetInnerHTML={{ __html: selectedProblemForView.description || 'No description provided.' }} />
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="text-sm font-black text-slate-400 uppercase tracking-wider mb-2">Input Format</h3>
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm text-slate-700 whitespace-pre-wrap">{selectedProblemForView.inputDescription || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-slate-400 uppercase tracking-wider mb-2">Output Format</h3>
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm text-slate-700 whitespace-pre-wrap">{selectedProblemForView.outputDescription || 'N/A'}</div>
+                    </div>
+                  </div>
+                  
+                  {selectedProblemForView.constraints && (
+                    <div>
+                      <h3 className="text-sm font-black text-slate-400 uppercase tracking-wider mb-2">Constraints</h3>
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm text-slate-700 whitespace-pre-wrap font-mono text-xs">{selectedProblemForView.constraints}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sidebar Details */}
+                <div className="space-y-6 bg-slate-50 p-6 rounded-2xl border border-slate-100 h-fit">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Status</h3>
+                    <div className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-black bg-rose-50 text-rose-500 border border-rose-100">
+                      DELETED / ARCHIVED
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Difficulty</h3>
+                    <div className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-black ${
+                      selectedProblemForView.difficulty === 'EASY' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                      selectedProblemForView.difficulty === 'MEDIUM' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+                      selectedProblemForView.difficulty === 'HARD' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
+                      'bg-slate-50 text-slate-600 border border-slate-200'
+                    }`}>
+                      {selectedProblemForView.difficulty || 'UNKNOWN'}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Scope</h3>
+                    <div className="text-sm font-bold text-slate-700 capitalize">{selectedProblemForView.problemScope?.toLowerCase() || 'Practice'}</div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Limits</h3>
+                    <div className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[16px] text-slate-400">timer</span> {selectedProblemForView.timeLimitMs} ms
+                    </div>
+                    <div className="text-sm font-bold text-slate-700 flex items-center gap-2 mt-1">
+                      <span className="material-symbols-outlined text-[16px] text-slate-400">memory</span> {selectedProblemForView.memoryLimitKb} KB
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Created At</h3>
+                    <div className="text-sm font-bold text-slate-700">
+                      {selectedProblemForView.createdAt ? new Date(selectedProblemForView.createdAt).toLocaleString() : 'Unknown'}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ================= MODAL: STATUS CHANGE CONFIRMATION ================= */}
       {statusConfirmTarget && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
@@ -6255,6 +5932,159 @@ export const AdminDashboard: React.FC = () => {
               >
                 Close Report
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diff Modal */}
+      {/* Diff Modal */}
+      {selectedVersionIndexForDiff !== null && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setSelectedVersionIndexForDiff(null)}></div>
+          <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-white/20 animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center px-8 py-6 border-b border-slate-100 bg-slate-50/50">
+              <div>
+                <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                  <span className="material-symbols-outlined text-indigo-500 icon-fill text-3xl">compare_arrows</span>
+                  Compare Versions
+                </h3>
+                <p className="text-slate-500 text-sm mt-1 font-medium">Compare v{problemVersions[selectedVersionIndexForDiff + 1]?.versionNumber} with newer version (v{problemVersions[selectedVersionIndexForDiff]?.versionNumber})</p>
+              </div>
+              <button 
+                onClick={() => setSelectedVersionIndexForDiff(null)}
+                className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors border-none bg-transparent cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-2xl">close</span>
+              </button>
+            </div>
+            
+            <div className="p-8 overflow-y-auto custom-scrollbar flex-1 bg-slate-50">
+              <h4 className="font-bold text-slate-800 mb-2">Title</h4>
+              <DiffViewer oldText={problemVersions[selectedVersionIndexForDiff + 1]?.title} newText={problemVersions[selectedVersionIndexForDiff]?.title} mode="words" />
+              
+              <h4 className="font-bold text-slate-800 mb-2 mt-6">Description</h4>
+              <DiffViewer oldText={problemVersions[selectedVersionIndexForDiff + 1]?.description} newText={problemVersions[selectedVersionIndexForDiff]?.description} mode="words" />
+
+              <h4 className="font-bold text-slate-800 mb-2 mt-6">Input / Output</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-xs text-slate-500 block mb-1">Input Description</span>
+                  <DiffViewer oldText={problemVersions[selectedVersionIndexForDiff + 1]?.inputDescription} newText={problemVersions[selectedVersionIndexForDiff]?.inputDescription} mode="words" />
+                </div>
+                <div>
+                  <span className="text-xs text-slate-500 block mb-1">Output Description</span>
+                  <DiffViewer oldText={problemVersions[selectedVersionIndexForDiff + 1]?.outputDescription} newText={problemVersions[selectedVersionIndexForDiff]?.outputDescription} mode="words" />
+                </div>
+              </div>
+              
+              <h4 className="font-bold text-slate-800 mb-2 mt-6">Limits</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-xs text-slate-500 block mb-1">Time Limit (ms)</span>
+                  <DiffViewer oldText={String(problemVersions[selectedVersionIndexForDiff + 1]?.timeLimitMs || '')} newText={String(problemVersions[selectedVersionIndexForDiff]?.timeLimitMs || '')} mode="words" />
+                </div>
+                <div>
+                  <span className="text-xs text-slate-500 block mb-1">Memory Limit (KB)</span>
+                  <DiffViewer oldText={String(problemVersions[selectedVersionIndexForDiff + 1]?.memoryLimitKb || '')} newText={String(problemVersions[selectedVersionIndexForDiff]?.memoryLimitKb || '')} mode="words" />
+                </div>
+              </div>
+
+              <h4 className="font-bold text-slate-800 mb-2 mt-6">Testcases</h4>
+              <DiffViewer 
+                oldText={formatTestcases(problemVersions[selectedVersionIndexForDiff + 1]?.testcases)} 
+                newText={formatTestcases(problemVersions[selectedVersionIndexForDiff]?.testcases)} 
+                mode="words" 
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Problem History Modal */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => { setShowHistoryModal(false); setSelectedVersionIndexForDiff(null); }}></div>
+          <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-white/20 animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center px-8 py-6 border-b border-slate-100 bg-slate-50/50">
+              <div>
+                <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                  <span className="material-symbols-outlined text-indigo-500 icon-fill text-3xl">history</span>
+                  Problem Version History
+                </h3>
+                <p className="text-slate-500 text-sm mt-1 font-medium">Problem ID: {historyProblemId}</p>
+              </div>
+              <button 
+                onClick={() => { setShowHistoryModal(false); setSelectedVersionIndexForDiff(null); }}
+                className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors border-none bg-transparent cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-2xl">close</span>
+              </button>
+            </div>
+            
+            <div className="p-8 overflow-y-auto custom-scrollbar flex-1 bg-slate-50">
+              {problemVersions.length === 0 ? (
+                <div className="text-center py-12">
+                  <span className="material-symbols-outlined text-6xl text-slate-300 mb-4">history_toggle_off</span>
+                  <p className="text-slate-500 font-medium">No version history found for this problem.</p>
+                </div>
+              ) : (
+                <div className="space-y-6 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
+                  {problemVersions.slice(0, 3).map((version, index) => (
+                    <div key={version.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-white bg-indigo-100 text-indigo-600 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
+                        <span className="font-bold text-sm">v{version.versionNumber}</span>
+                      </div>
+                      
+                      <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-white p-5 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-bold text-lg text-slate-800">{version.title}</h4>
+                          <span className="text-xs font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded-lg">
+                            {new Date(version.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-y-2 gap-x-4 mt-4 text-sm">
+                          <div className="flex flex-col">
+                            <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Difficulty</span>
+                            <span className="font-medium text-slate-700">{version.difficulty}</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Limits</span>
+                            <span className="font-medium text-slate-700">{version.timeLimitMs}ms / {version.memoryLimitKb}KB</span>
+                          </div>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-slate-100">
+                          <div className="text-sm text-slate-600 line-clamp-2" dangerouslySetInnerHTML={{ __html: version.description }} />
+                          <div className="flex justify-end gap-2 mt-4">
+                            {historyProblemId && (
+                              <>
+                                {problemVersions[index + 1] && (
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); setSelectedVersionIndexForDiff(index); }}
+                                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">compare_arrows</span>
+                                    Compare with v{problemVersions[index + 1].versionNumber}
+                                  </button>
+                                )}
+                                {index !== 0 && (
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); handleRollbackProblemVersion(historyProblemId, version.id); }}
+                                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">history</span>
+                                    Restore to v{version.versionNumber}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

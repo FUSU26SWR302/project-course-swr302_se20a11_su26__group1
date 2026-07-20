@@ -1807,9 +1807,9 @@ export const InstructorDashboard: React.FC = () => {
       setPrereqPoints(['']);
       setAudiencePoints(['']);
       setBenefitPoints(['']);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to create course:', err);
-      setCourseFormError('An error occurred while creating the course. Please try again.');
+      setCourseFormError(err.message || 'An error occurred while creating the course. Please try again.');
     } finally {
       setIsSubmittingCourse(false);
     }
@@ -5547,11 +5547,14 @@ export const InstructorDashboard: React.FC = () => {
               <div className="p-6 md:p-8 flex flex-col gap-6 max-h-[72vh] overflow-y-auto bg-slate-50/30">
                 
                 {courseFormError && (
-                  <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl flex items-start gap-3 animate-fade-in shrink-0">
-                    <span className="material-symbols-outlined text-red-500 shrink-0">error</span>
-                    <div className="flex flex-col">
-                      <span className="text-sm font-bold">Validation Error</span>
-                      <span className="text-sm">{courseFormError}</span>
+                  <div className="relative overflow-hidden bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-2xl p-4 shadow-[0_8px_16px_-6px_rgba(239,68,68,0.15)] flex items-start gap-4 animate-fade-in shrink-0">
+                    <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-red-500 to-rose-500 rounded-l-2xl"></div>
+                    <div className="bg-white p-2 rounded-full shadow-sm border border-red-100 shrink-0 mt-0.5">
+                      <span className="material-symbols-outlined text-red-500 shrink-0 text-xl" style={{ fontVariationSettings: '"FILL" 1' }}>error</span>
+                    </div>
+                    <div className="flex flex-col pt-1">
+                      <span className="text-xs font-black text-red-700 tracking-wider uppercase mb-1">Creation Failed</span>
+                      <span className="text-sm text-red-600/90 font-medium leading-relaxed">{courseFormError}</span>
                     </div>
                   </div>
                 )}

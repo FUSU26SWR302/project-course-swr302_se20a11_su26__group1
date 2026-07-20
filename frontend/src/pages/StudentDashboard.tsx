@@ -25,6 +25,10 @@ import {
   type MyContestHistory
 } from '../services/contestService';
 import { isYoutubeUrl, getYoutubeEmbedUrl, getOptimizedVideoUrl } from '../utils/videoUtils';
+import { problemService, type ProblemDetail, type ProblemSubmission } from '../services/problemService';
+import SockJS from 'sockjs-client';
+import { Stomp } from '@stomp/stompjs';
+import { CodeEditor } from '../components/CodeEditor';
 
 
 const TX_TYPE_OPTIONS = [
@@ -34,6 +38,48 @@ const TX_TYPE_OPTIONS = [
   { value: 'REFUND', label: 'Refund', bg: 'bg-purple-100 text-purple-700' },
   { value: 'AWARD', label: 'Award', bg: 'bg-amber-100 text-amber-700' }
 ];
+
+const SUPPORTED_LANGUAGES = [
+  {"id":50,"name":"C (GCC 9.2.0)"},
+  {"id":54,"name":"C++ (GCC 9.2.0)"},
+  {"id":62,"name":"Java (OpenJDK 13.0.1)"},
+  {"id":71,"name":"Python (3.8.1)"},
+  {"id":51,"name":"C# (Mono 6.6.0.161)"}
+];
+
+const LANGUAGE_KEYS: Record<number, string> = {
+  50: 'c',
+  54: 'cpp',
+  62: 'java',
+  71: 'python',
+  51: 'csharp'
+};
+
+const getTemplateForLang = (langId: number, templates: {[key: string]: string} | undefined) => {
+  if (!templates) return '';
+  const lang = SUPPORTED_LANGUAGES.find(l => l.id === langId);
+  if (!lang) return '';
+  const name = lang.name;
+  if (name.includes('Java (')) return templates['Java'] || '';
+  if (name.includes('Python')) return templates['Python 3'] || templates['Python'] || '';
+  if (name.includes('C++')) return templates['C++'] || '';
+  if (name.includes('C (')) return templates['C'] || '';
+  if (name.includes('JavaScript') || name.includes('TypeScript')) return templates['JavaScript'] || '';
+  if (name.includes('C#')) return templates['C#'] || '';
+  const baseName = name.split(' ')[0];
+  return templates[baseName] || '';
+};
+
+const formatPreText = (text: string) => {
+  if (!text) return '';
+  return text.replace(/<br\s*\/?>/gi, '\n');
+};
+
+const formatHtmlText = (htmlText: string) => {
+  if (!htmlText) return '';
+  return htmlText.replace(/<pre>/g, '<pre class="bg-surface-gray p-4 rounded-xl border border-gray-200 overflow-x-auto text-sm">');
+};
+
 
 // ==========================================
 // MOCK DATA & PLACEHOLDERS - CONTEST MODULE
@@ -99,6 +145,12 @@ const EmptyState: React.FC<{
 
 
 export const StudentDashboard: React.FC = () => {
+  const [toastMessage, setToastMessage] = useState<{message: string, type: 'error' | 'success'} | null>(null);
+  const showToast = (message: string, type: 'error' | 'success' = 'error') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const { user, refreshBalance, updateUser } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
@@ -200,7 +252,7 @@ export const StudentDashboard: React.FC = () => {
       }, 100);
     } catch (err: any) {
       console.error('Error submitting quiz:', err);
-      alert(err.message || 'Failed to submit quiz');
+      showToast(err.message || 'Failed to submit quiz', 'error');
     } finally {
       setIsQuizSubmitting(false);
     }
@@ -236,11 +288,37 @@ export const StudentDashboard: React.FC = () => {
   // Exercises panel inside Course Player
   const [playerExercises, setPlayerExercises] = useState<any[]>([]);
   const [currentProblemName, setCurrentProblemName] = useState<string | null>(null);
-  const [solveLang, setSolveLang] = useState<string>('Java');
-  const [solveCode, setSolveCode] = useState<string>('');
-  const [solveResult, setSolveResult] = useState<{ status: string; statusClass: string; time: string; output: string } | null>(null);
+  const [currentProblemId, setCurrentProblemId] = useState<number | null>(null);
+  
+  // Problem Solver States
+  const [problemDetail, setProblemDetail] = useState<ProblemDetail | null>(null);
+  const [selectedLangId, setSelectedLangId] = useState<number>(62); // Java default
+  const [codeByLang, setCodeByLang] = useState<Record<string, string>>({
+    c: '',
+    cpp: '',
+    java: '',
+    python: '',
+    csharp: ''
+  });
+  const [testcasesLogs, setTestcasesLogs] = useState<any[]>([]);
+  const [overallResult, setOverallResult] = useState<any>(null);
+  const [expandedTestcases, setExpandedTestcases] = useState<Record<number, boolean>>({});
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [editorToast, setEditorToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const [maintenanceError, setMaintenanceError] = useState<boolean>(false);
+  const [copiedInput, setCopiedInput] = useState<boolean>(false);
+  const [copiedOutput, setCopiedOutput] = useState<boolean>(false);
+
+  // Inline Solver States
+  const [inlineSolverTab, setInlineSolverTab] = useState<'description' | 'submissions'>('description');
+  const [problemSubmissions, setProblemSubmissions] = useState<ProblemSubmission[]>([]);
+
+  useEffect(() => {
+    if (inlineSolverTab === 'submissions' && currentProblemId) {
+      problemService.fetchProblemSubmissions(currentProblemId)
+        .then(data => setProblemSubmissions(data || []))
+        .catch(console.error);
+    }
+  }, [inlineSolverTab, currentProblemId]);
 
   // Deposit Tab States
   const [depositAmount, setDepositAmount] = useState<string>('');
@@ -541,7 +619,15 @@ export const StudentDashboard: React.FC = () => {
                 setPlayerCourseAuthor(`${detail.instructorName} • Instructor`);
                 setPlayerCourseProgress(`${detail.progressPercentage}%`);
 
-                let activeLessonId = detail.activeLessonId;
+                const lessonIdParam = hashParams.get('lessonId');
+                let activeLessonId = lessonIdParam ? parseInt(lessonIdParam, 10) : detail.activeLessonId;
+
+                const tabParam = hashParams.get('tab');
+                if (tabParam && ['overview', 'qa', 'exercises', 'quiz'].includes(tabParam)) {
+                  setPlayerActiveTab(tabParam as any);
+                } else {
+                  setPlayerActiveTab('overview');
+                }
 
                 const chapters = await fetchCourseLearningCurriculum(restoredCourseId);
                 setLearningChapters(chapters);
@@ -562,8 +648,43 @@ export const StudentDashboard: React.FC = () => {
                   setPlayerLectureTitle(lesson.title);
                   setPlayerVideoUrl(lesson.videoUrl || '');
                   setPlayerTheoryContent(lesson.theoryContent || '');
-                  setPlayerExercises(lesson.exercises || []);
+                  setPlayerExercises((lesson.problems || lesson.exercises || []).map((p: any) => ({ ...p, problemId: p.id || p.problemId, name: p.title || p.name, completed: p.isSolved || p.completed, submissions: p.totalSubmission || p.submissions })));
                   setPlayerLessonStatus(lesson.status || 'ACTIVE');
+                  
+                  const problemIdParam = hashParams.get('problemId');
+                  if (problemIdParam) {
+                    const restoredProblemId = parseInt(problemIdParam, 10);
+                    if (!isNaN(restoredProblemId)) {
+                      setCurrentProblemId(restoredProblemId);
+                      const solverTabParam = hashParams.get('solverTab') as 'description' | 'submissions';
+                      if (solverTabParam && ['description', 'submissions'].includes(solverTabParam)) {
+                        setInlineSolverTab(solverTabParam);
+                      } else {
+                        setInlineSolverTab('description');
+                      }
+                      problemService.fetchProblemDetail(restoredProblemId).then(data => {
+                        setProblemDetail(data);
+                        setCurrentProblemName(data.title);
+                        const actualTemplates = data.templates || data.starterTemplates;
+                        const initialCodeByLang: Record<string, string> = { c: '', cpp: '', java: '', python: '', csharp: '' };
+                        if (actualTemplates) {
+                          SUPPORTED_LANGUAGES.forEach(lang => {
+                            const langKey = LANGUAGE_KEYS[lang.id];
+                            if (langKey) {
+                              initialCodeByLang[langKey] = getTemplateForLang(lang.id, actualTemplates);
+                            }
+                          });
+                        }
+                        const defaultLangId = data.language_id || 62;
+                        setSelectedLangId(defaultLangId);
+                        const defaultLangKey = LANGUAGE_KEYS[defaultLangId];
+                        if (data.source_code && defaultLangKey) {
+                          initialCodeByLang[defaultLangKey] = data.source_code;
+                        }
+                        setCodeByLang(initialCodeByLang);
+                      }).catch(console.error);
+                    }
+                  }
                 } else {
                   setPlayerLectureTitle('No lessons available');
                   setPlayerVideoUrl('');
@@ -742,6 +863,23 @@ export const StudentDashboard: React.FC = () => {
     }
   }, [playerCourseId, selectedLessonId, playerActiveTab]);
 
+  // Sync tab state and selected lesson to URL
+  useEffect(() => {
+    if (activeTab === 'learning-view' && playerCourseId && selectedLessonId) {
+      let hash = `#learning-view?courseId=${playerCourseId}&lessonId=${selectedLessonId}&tab=${playerActiveTab}`;
+      if (currentProblemId) {
+        hash += `&problemId=${currentProblemId}`;
+      }
+      if (inlineSolverTab && inlineSolverTab !== 'description') {
+        hash += `&solverTab=${inlineSolverTab}`;
+      }
+      // Only replace if changed to avoid unnecessary History API calls
+      if (location.hash !== hash) {
+        navigate(hash, { replace: true });
+      }
+    }
+  }, [activeTab, playerCourseId, selectedLessonId, playerActiveTab, currentProblemId, inlineSolverTab, navigate, location.hash]);
+
 
   const ongoingScrollRef = useRef<HTMLDivElement>(null);
   const completedScrollRef = useRef<HTMLDivElement>(null);
@@ -896,7 +1034,7 @@ export const StudentDashboard: React.FC = () => {
         setPlayerLectureTitle(lesson.title);
         setPlayerVideoUrl(lesson.videoUrl || '');
         setPlayerTheoryContent(lesson.theoryContent || '');
-        setPlayerExercises(lesson.exercises || []);
+        setPlayerExercises((lesson.problems || lesson.exercises || []).map((p: any) => ({ ...p, problemId: p.id || p.problemId, name: p.title || p.name, completed: p.isSolved || p.completed, submissions: p.totalSubmission || p.submissions })));
         setPlayerLessonStatus(lesson.status || 'ACTIVE');
       } else {
         setPlayerLectureTitle('No lessons available');
@@ -927,7 +1065,7 @@ export const StudentDashboard: React.FC = () => {
       setPlayerLectureTitle(lesson.title);
       setPlayerVideoUrl(lesson.videoUrl || '');
       setPlayerTheoryContent(lesson.theoryContent || '');
-      setPlayerExercises(lesson.exercises || []);
+      setPlayerExercises((lesson.problems || lesson.exercises || []).map((p: any) => ({ ...p, problemId: p.id || p.problemId, name: p.title || p.name, completed: p.isSolved || p.completed, submissions: p.totalSubmission || p.submissions })));
       setPlayerLessonStatus(lesson.status || 'ACTIVE');
 
       // Optional: Refresh progress and curriculum status on selecting/learning
@@ -936,6 +1074,9 @@ export const StudentDashboard: React.FC = () => {
 
       const chapters = await fetchCourseLearningCurriculum(playerCourseId);
       setLearningChapters(chapters);
+
+      // Update URL hash to persist the selected lesson
+      navigate(`#learning-view?courseId=${playerCourseId}&lessonId=${lessonId}`, { replace: true });
     } catch (err) {
       console.error('Failed to load lesson details:', err);
     } finally {
@@ -965,110 +1106,163 @@ export const StudentDashboard: React.FC = () => {
       await refreshLearningProgress(playerCourseId);
     } catch (err: any) {
       console.error('Failed to complete lesson:', err);
-      alert(err.message || 'Không thể hoàn thành bài học');
+      showToast(err.message || 'Failed to complete lesson', 'error');
     } finally {
       setIsPlayerLoading(false);
     }
   };
 
   // Exercises actions
-  const handleStartSolveProblem = (problemName: string) => {
-    const problem = null; // Mock data removed, use API instead
-    if (!problem) return;
-
+  const handleStartSolveProblem = (problemId: number, problemName: string) => {
     setCurrentProblemName(problemName);
-    setSolveLang('Java');
-    setSolveCode('');
-    setSolveResult(null);
+    setCurrentProblemId(problemId);
+    setProblemDetail(null);
+    setTestcasesLogs([]);
+    setOverallResult(null);
+    setExpandedTestcases({});
+    setInlineSolverTab('description');
+    
+    // Fetch real data
+    problemService.fetchProblemDetail(problemId).then(data => {
+      setProblemDetail(data);
+      const actualTemplates = data.templates || data.starterTemplates;
+      
+      const initialCodeByLang: Record<string, string> = {
+        c: '', cpp: '', java: '', python: '', csharp: ''
+      };
+      
+      if (actualTemplates) {
+        SUPPORTED_LANGUAGES.forEach(lang => {
+          const langKey = LANGUAGE_KEYS[lang.id];
+          if (langKey) {
+            initialCodeByLang[langKey] = getTemplateForLang(lang.id, actualTemplates);
+          }
+        });
+      }
+      
+      const defaultLangId = data.language_id || 62;
+      setSelectedLangId(defaultLangId);
+      
+      const defaultLangKey = LANGUAGE_KEYS[defaultLangId];
+      if (data.source_code && defaultLangKey) {
+        initialCodeByLang[defaultLangKey] = data.source_code;
+      }
+      
+      setCodeByLang(initialCodeByLang);
+    }).catch(err => {
+      console.error("Failed to load problem:", err);
+      showToast("Failed to load problem details.", 'error');
+    });
   };
 
-  const handleLanguageChange = (lang: string) => {
-    setSolveLang(lang);
-    if (currentProblemName) {
-      setSolveCode('');
+  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newLangId = Number(e.target.value);
+    setSelectedLangId(newLangId);
+  };
+
+  const handleCodeChange = (newCode: string | undefined) => {
+    const langKey = LANGUAGE_KEYS[selectedLangId];
+    if (langKey && newCode !== undefined) {
+      setCodeByLang(prev => ({ ...prev, [langKey]: newCode }));
     }
   };
 
   const handleResetCode = () => {
-    if (currentProblemName) {
-      setSolveCode('');
+    const actualTemplates = problemDetail?.templates || problemDetail?.starterTemplates;
+    if (actualTemplates) {
+      const defaultCode = getTemplateForLang(selectedLangId, actualTemplates);
+      const langKey = LANGUAGE_KEYS[selectedLangId];
+      if (langKey) {
+        setCodeByLang(prev => ({ ...prev, [langKey]: defaultCode }));
+      }
     }
   };
 
-  const triggerEditorToast = (message: string, type: 'success' | 'info' | 'error') => {
-    setEditorToast({ message, type });
-    if (type !== 'info') {
-      setTimeout(() => setEditorToast(null), 3000);
-    }
+  const copyToClipboard = (text: string | undefined | null, type: 'input' | 'output') => {
+    if (!text) return;
+    const cleanText = formatPreText(text);
+    navigator.clipboard.writeText(cleanText).then(() => {
+      if (type === 'input') {
+        setCopiedInput(true);
+        setTimeout(() => setCopiedInput(false), 2000);
+      } else {
+        setCopiedOutput(true);
+        setTimeout(() => setCopiedOutput(false), 2000);
+      }
+    });
+  };
+
+  const toggleTestcaseDetails = (testcaseId: number) => {
+    setExpandedTestcases(prev => ({ ...prev, [testcaseId]: !prev[testcaseId] }));
   };
 
   const handleCodeSubmit = () => {
-    if (!currentProblemName) return;
-
+    if (!currentProblemId || !user) return;
+    
     setIsSubmitting(true);
-    setSolveResult(null);
-    triggerEditorToast('Submitting solution...', 'info');
+    setTestcasesLogs([]);
+    setOverallResult(null);
+    setExpandedTestcases({});
+    
+    const langKey = LANGUAGE_KEYS[selectedLangId];
+    const sourceCode = langKey ? codeByLang[langKey] : '';
 
-    setTimeout(() => {
-      setIsSubmitting(false);
-      const codeText = solveCode.trim();
-      
-      // Determine if default template is unchanged
-      let isDefault = false;
-      if (currentProblemName === "Two Sum") {
-        isDefault = codeText.includes("return new int[] {};") || codeText.includes("return {};") || codeText.includes("pass") || codeText.includes("// Write your");
-      } else if (currentProblemName === "Reverse Linked List") {
-        isDefault = codeText.includes("return null;") || codeText.includes("return nullptr;") || codeText.includes("pass") || codeText.includes("// Write your");
-      } else if (currentProblemName === "Spring Context Hierarchy Solver") {
-        isDefault = codeText.includes("return false;") || codeText.includes("return False;") || codeText.includes("pass") || codeText.includes("// Write your");
-      }
-
-      if (isDefault) {
-        setSolveResult({
-          status: 'Wrong Answer',
-          statusClass: 'bg-red-900/30 text-red-400 border border-red-800/30',
-          time: 'Runtime: N/A',
-          output: currentProblemName === "Two Sum" 
-            ? "Output: []\nExpected: [0, 1]\n\nTest case 1/3 failed for Input: nums = [2,7,11,15], target = 9"
-            : currentProblemName === "Reverse Linked List"
-            ? "Output: null\nExpected: [5,4,3,2,1]\n\nTest case 1/3 failed for Input: head = [1,2,3,4,5]"
-            : "Output: false\nExpected: true\n\nTest case 1/3 failed for Input: contextParents = {\"child\": \"parent\"}, lookupContext = \"child\", beanName = \"userService\""
-        });
-        triggerEditorToast("Wrong Answer: Some test cases failed.", "error");
-      } else {
-        setSolveResult({
-          status: 'Accepted',
-          statusClass: 'bg-green-900/30 text-green-400 border border-green-800/30',
-          time: 'Runtime: 2 ms',
-          output: 'All test cases passed (3/3).\nYour solution has been accepted and submitted successfully!'
-        });
+    problemService.submitSolution(currentProblemId, selectedLangId, sourceCode, undefined, selectedLessonId || undefined)
+      .then(() => {
+        const socket = new SockJS('http://localhost:8080/nonstopcoding/ws');
+        const stompClient = Stomp.over(socket);
+        stompClient.debug = () => {};
         
-        // Mark as completed
-        setPlayerExercises(prev => 
-          prev.map(ex => ex.name === currentProblemName ? { ...ex, completed: true } : ex)
-        );
-        triggerEditorToast("Accepted! Solution submitted successfully.", "success");
-      }
-    }, 1200);
-  };
-
-  const getLineNumbersText = () => {
-    const lineCount = solveCode.split('\n').length;
-    const items = [];
-    for (let i = 1; i <= Math.max(lineCount, 12); i++) {
-      items.push(i);
-    }
-    return items.map(n => <div key={n}>{n}</div>);
+        stompClient.connect({}, () => {
+          stompClient.subscribe(`/topic/submissions/${user.id}`, (message) => {
+            const payload = JSON.parse(message.body);
+            if (payload.testcaseId) {
+               setTestcasesLogs(prev => {
+                 if (prev.find(p => p.testcaseId === payload.testcaseId)) return prev;
+                 return [...prev, payload];
+               });
+               if (payload.overallVerdict && payload.overallVerdict !== 'PENDING' && payload.overallVerdict !== 'PROCESSING') {
+                 setOverallResult(payload);
+                 setIsSubmitting(false);
+                 stompClient.disconnect();
+                 
+                 if (payload.overallVerdict === 'ACCEPTED') {
+                   setPlayerExercises(prev => prev.map(ex => 
+                     ex.id === currentProblemId ? { ...ex, completed: true } : ex
+                   ));
+                 }
+               }
+            } else if (payload.overallVerdict) {
+               setOverallResult(payload);
+               setIsSubmitting(false);
+               stompClient.disconnect();
+               
+                if (payload.overallVerdict === 'ACCEPTED') {
+                  setPlayerExercises(prev => prev.map(ex => 
+                    ex.id === currentProblemId ? { ...ex, completed: true } : ex
+                  ));
+                }
+             }
+          });
+        });
+      })
+      .catch(err => {
+        setIsSubmitting(false);
+        const errMsg = err.message || 'Submission failed';
+        if (errMsg.includes('404') || errMsg.includes('Not Found') || errMsg.includes('Lỗi hệ thống') || errMsg.toLowerCase().includes('judge0') || errMsg.toLowerCase().includes('ngrok')) {
+          setMaintenanceError(true);
+        } else {
+          showToast(errMsg, 'error');
+        }
+      });
   };
 
   // Deposit Actions
   const handleGenerateQR = async () => {
     const rawAmount = depositAmount.replace(/\./g, '');
     const amountNum = Number(rawAmount);
-    if (!depositAmount || isNaN(amountNum) || amountNum < 2000) {
-      alert("Vui lòng nhập số tiền hợp lệ. Số tiền nạp tối thiểu là 2.000 VND.");
-      const input = document.getElementById('deposit-amount');
-      if (input) input.focus();
+    if (!rawAmount || isNaN(Number(rawAmount)) || Number(rawAmount) < 2000) {
+      showToast("Please enter a valid amount. Minimum deposit is 2,000 VND.", 'error');
       return;
     }
 
@@ -1152,6 +1346,12 @@ export const StudentDashboard: React.FC = () => {
 
   return (
     <div className="flex-grow w-full flex flex-row relative bg-[#f0f4f9]/40 text-text-main font-body min-h-screen">
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-xl shadow-2xl text-white font-medium animate-fade-in flex items-center gap-3 ${toastMessage.type === 'error' ? 'bg-red-500 shadow-red-500/30' : 'bg-green-500 shadow-green-500/30'} transition-all transform duration-300`}>
+          <span className="material-symbols-outlined text-[24px]">{toastMessage.type === 'error' ? 'error' : 'check_circle'}</span>
+          <span className="text-sm tracking-wide">{toastMessage.message}</span>
+        </div>
+      )}
       
       {/* Left Sidebar Navbar */}
       <aside className="w-16 md:w-64 shrink-0 sticky top-16 self-start flex flex-col gap-2 py-6 px-3 bg-surface border-r border-gray-100 h-[calc(100vh-4rem)] overflow-y-auto z-20">
@@ -1381,7 +1581,7 @@ export const StudentDashboard: React.FC = () => {
                         <select 
                           value={activityYear}
                           onChange={(e) => setActivityYear(Number(e.target.value))}
-                          className="bg-surface-gray border-none text-text-main rounded-md py-0.5 pl-2 pr-6 text-[10px] lg:text-xs focus:ring-primary outline-none cursor-pointer"
+                          className="bg-surface-gray border-none text-text-main rounded-md py-0.5 pl-2 pr-8 text-[10px] lg:text-xs focus:ring-primary outline-none cursor-pointer"
                         >
                           <option value={new Date().getFullYear()}>Current</option>
                           <option value="2026">2026</option>
@@ -1980,7 +2180,7 @@ export const StudentDashboard: React.FC = () => {
                                 setRootCommentText('');
                                 loadLessonComments(selectedLessonId);
                               } catch (err: any) {
-                                alert(err.message || 'Failed to post comment');
+                                showToast(err.message || 'Failed to post comment', 'error');
                               }
                             }}
                             disabled={!rootCommentText.trim()}
@@ -2072,7 +2272,7 @@ export const StudentDashboard: React.FC = () => {
                                               setReplyingCommentId(null);
                                               loadLessonComments(selectedLessonId);
                                             } catch (err: any) {
-                                              alert(err.message || 'Failed to post reply');
+                                              showToast(err.message || 'Failed to post reply', 'error');
                                             }
                                           }}
                                           disabled={!replyText.trim()}
@@ -2136,7 +2336,7 @@ export const StudentDashboard: React.FC = () => {
                   {/* Exercises */}
                   {playerActiveTab === 'exercises' && (
                     <div className="animate-fade-in">
-                      {currentProblemName === null ? (
+                      {currentProblemId === null ? (
                         <div>
                           <h2 className="text-lg font-bold text-text-main mb-1">Practice Problems</h2>
                           <p className="text-xs text-text-muted mb-4">Solve these algorithmic challenges to solidify your understanding of the lesson.</p>
@@ -2166,7 +2366,7 @@ export const StudentDashboard: React.FC = () => {
                                     <td className="p-3 text-right text-xs text-text-muted font-mono">{ex.submissions}</td>
                                     <td className="p-3 text-center">
                                       <button 
-                                        onClick={() => handleStartSolveProblem(ex.name)}
+                                        onClick={() => handleStartSolveProblem(ex.problemId || ex.id, ex.name)}
                                         className="border border-gray-200 hover:border-primary hover:text-primary bg-white text-text-main px-3 py-1 rounded font-bold text-xs transition-all"
                                       >
                                         Solve
@@ -2180,10 +2380,10 @@ export const StudentDashboard: React.FC = () => {
                         </div>
                       ) : (
                         // Problem Solver View
-                        <div className="flex flex-col gap-6 animate-fade-in">
+                        <div className="flex flex-col gap-6 animate-fade-in pb-16">
                           <div className="flex items-center justify-between border-b border-gray-200 pb-4">
                             <button 
-                              onClick={() => setCurrentProblemName(null)}
+                              onClick={() => { setCurrentProblemName(null); setCurrentProblemId(null); setProblemDetail(null); }}
                               className="flex items-center gap-1.5 text-xs font-bold text-text-muted hover:text-primary transition-all bg-transparent border-none cursor-pointer"
                             >
                               <span className="material-symbols-outlined text-[16px]">arrow_back</span> Back to Problems
@@ -2191,95 +2391,248 @@ export const StudentDashboard: React.FC = () => {
                             <div className="flex items-center gap-3">
                               <h3 className="text-base font-bold text-text-main">{currentProblemName}</h3>
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-700">
-                                Difficulty
+                                {problemDetail ? problemDetail.difficulty : 'Loading...'}
                               </span>
                             </div>
+                          </div>
+
+                          {/* Tabs for Inline Solver */}
+                          <div className="flex items-center gap-4 border-b border-gray-200 mb-2">
+                             <button 
+                               onClick={() => setInlineSolverTab('description')}
+                               className={`pb-2 px-1 font-semibold text-sm transition-all flex items-center gap-2 ${inlineSolverTab === 'description' ? 'border-b-2 border-primary text-primary' : 'text-text-muted hover:text-primary'}`}
+                             >
+                               Description
+                             </button>
+                             <button 
+                               onClick={() => setInlineSolverTab('submissions')}
+                               className={`pb-2 px-1 font-semibold text-sm transition-all flex items-center gap-2 ${inlineSolverTab === 'submissions' ? 'border-b-2 border-primary text-primary' : 'text-text-muted hover:text-primary'}`}
+                             >
+                               Submissions
+                             </button>
                           </div>
 
                           {/* Description Panel */}
-                          <div 
-                            className="prose max-w-none text-sm text-text-muted leading-relaxed"
-                          >
-                            <p>Problem description not available. Please use the API to fetch problem details.</p>
+                          {inlineSolverTab === 'description' && (
+                            <div className="prose max-w-none text-sm text-text-main leading-relaxed bg-white p-6 border border-gray-200 rounded-xl shadow-sm">
+                              {problemDetail ? (
+                                <div className="space-y-4">
+                                  <div dangerouslySetInnerHTML={{ __html: formatHtmlText(problemDetail.description) }} />
+                                  {problemDetail.inputDescription && (
+                                    <div>
+                                      <h3 className="font-semibold text-lg mb-1 mt-4">Input Description</h3>
+                                      <div dangerouslySetInnerHTML={{ __html: formatHtmlText(problemDetail.inputDescription) }} className="text-text-muted text-sm" />
+                                    </div>
+                                  )}
+                                {problemDetail.outputDescription && (
+                                  <div>
+                                    <h3 className="font-semibold text-lg mb-1 mt-4">Output Description</h3>
+                                    <div dangerouslySetInnerHTML={{ __html: formatHtmlText(problemDetail.outputDescription) }} className="text-text-muted text-sm" />
+                                  </div>
+                                )}
+                                {(problemDetail.exampleInput || problemDetail.exampleOutput) && (
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                                    {problemDetail.exampleInput && (
+                                      <div className="flex flex-col">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <span className="text-text-main font-semibold text-sm">Sample Input</span>
+                                        </div>
+                                        <div className="bg-surface-gray rounded-xl p-4 font-mono text-sm text-text-main border border-gray-200 whitespace-pre-wrap shadow-sm">
+                                          {formatPreText(problemDetail.exampleInput)}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {problemDetail.exampleOutput && (
+                                      <div className="flex flex-col">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <span className="text-text-main font-semibold text-sm">Sample Output</span>
+                                        </div>
+                                        <div className="bg-surface-gray rounded-xl p-4 font-mono text-sm text-text-main border border-gray-200 whitespace-pre-wrap shadow-sm">
+                                          {formatPreText(problemDetail.exampleOutput)}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center py-8">
+                                <span className="animate-spin h-6 w-6 border-b-2 border-primary rounded-full mr-3"></span>
+                                <span className="text-text-muted">Loading problem description...</span>
+                              </div>
+                            )}
                           </div>
+                          )}
+                          
+                          {/* Submissions Panel */}
+                          {inlineSolverTab === 'submissions' && (
+                            <div className="bg-white p-6 border border-gray-200 rounded-xl shadow-sm overflow-x-auto">
+                              <table className="w-full text-left border-collapse whitespace-nowrap min-w-[500px]">
+                                <thead>
+                                  <tr className="bg-surface-gray border-b border-gray-200 text-text-muted text-xs font-bold uppercase tracking-wider">
+                                    <th className="p-4 w-1/3">Status</th>
+                                    <th className="p-4">Language</th>
+                                    <th className="p-4">Runtime</th>
+                                    <th className="p-4">Memory</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-150">
+                                  {(problemSubmissions || []).length > 0 ? (
+                                    (problemSubmissions || []).map((sub, idx) => (
+                                      <tr key={idx} className="hover:bg-surface-gray/50 transition-colors">
+                                        <td className="p-4">
+                                          <span className={`font-bold text-sm ${sub.statusClass || ''}`}>{sub.status}</span>
+                                          <div className="text-xs text-text-muted mt-0.5">{sub.time}</div>
+                                        </td>
+                                        <td className="p-4 text-sm font-medium text-text-main">{sub.lang}</td>
+                                        <td className="p-4 text-sm text-text-muted">{sub.runtime}</td>
+                                        <td className="p-4 text-sm text-text-muted">{sub.memory}</td>
+                                      </tr>
+                                    ))
+                                  ) : (
+                                    <tr>
+                                      <td colSpan={4} className="p-8 text-center text-text-muted">
+                                        No submissions yet.
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
 
-                          {/* Dark Editor Canvas */}
-                          <div className="border border-gray-200 rounded-xl overflow-hidden bg-[#1e1e1e] shadow-lg flex flex-col">
-                            {/* Editor Header Actions */}
-                            <div className="bg-[#252526] border-b border-[#333333] px-4 py-2 flex justify-between items-center">
+                          {/* Code Editor Panel */}
+                          <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm flex flex-col">
+                            <div className="bg-surface-gray border-b border-gray-200 px-4 py-2 flex justify-between items-center">
                               <select 
-                                value={solveLang}
-                                onChange={(e) => handleLanguageChange(e.target.value)}
-                                className="bg-[#2d2d2d] text-white border-none rounded px-3 py-1 text-sm focus:ring-0 cursor-pointer outline-none"
+                                value={selectedLangId}
+                                onChange={handleLanguageChange}
+                                className="bg-white text-text-main border border-gray-300 rounded pl-3 pr-8 py-1.5 text-sm cursor-pointer outline-none focus:border-primary font-medium"
                               >
-                                <option value="Java">Java</option>
-                                <option value="C++">C++</option>
-                                <option value="Python">Python</option>
+                                {SUPPORTED_LANGUAGES.map(lang => (
+                                  <option key={lang.id} value={lang.id}>{lang.name}</option>
+                                ))}
                               </select>
                               <button 
                                 onClick={handleResetCode}
-                                className="text-[#cccccc] hover:text-white transition-colors bg-transparent border-none cursor-pointer" 
+                                className="text-text-muted hover:text-primary transition-colors cursor-pointer flex items-center gap-1 text-sm font-medium" 
                                 title="Reset Template"
                               >
-                                <span className="material-symbols-outlined text-xl">restart_alt</span>
+                                <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                                Reset
                               </button>
                             </div>
                             
-                            {/* Code Area */}
-                            <div className="flex font-mono text-sm leading-6 p-4">
-                              {/* Numbers */}
-                              <div className="w-10 text-[#858585] text-right pr-4 select-none">
-                                {getLineNumbersText()}
-                              </div>
-                              {/* Textarea */}
-                              <div className="flex-1">
-                                <textarea 
-                                  value={solveCode}
-                                  onChange={(e) => setSolveCode(e.target.value)}
-                                  className="w-full bg-transparent text-[#d4d4d4] border-none p-0 focus:ring-0 resize-none font-mono text-sm leading-6 focus:outline-none focus:ring-offset-0 focus:border-transparent outline-none shadow-none"
-                                  rows={12}
-                                  spellCheck={false}
+                            <div className="h-[450px]">
+                              {problemDetail ? (
+                                <CodeEditor
+                                  language={LANGUAGE_KEYS[selectedLangId] || 'java'}
+                                  value={LANGUAGE_KEYS[selectedLangId] ? codeByLang[LANGUAGE_KEYS[selectedLangId]] : ''}
+                                  onChange={handleCodeChange}
+                                  theme="vs"
                                 />
-                              </div>
-                            </div>
-
-                            {/* Result Panel */}
-                            {solveResult && (
-                              <div className="border-t border-[#333333] px-4 py-3 bg-[#181818] font-mono text-xs">
-                                <div className="flex items-center gap-3 mb-2">
-                                  <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${solveResult.statusClass}`}>
-                                    {solveResult.status}
-                                  </span>
-                                  <span className="text-[#858585] text-[10px]">{solveResult.time}</span>
+                              ) : (
+                                <div className="h-full flex items-center justify-center bg-gray-50">
+                                  <span className="animate-spin h-8 w-8 border-b-2 border-primary rounded-full mr-3"></span>
+                                  <span className="text-text-muted">Initializing Editor...</span>
                                 </div>
-                                <pre className="text-[#d4d4d4] whitespace-pre-wrap leading-relaxed font-mono text-xs">
-                                  {solveResult.output}
-                                </pre>
-                              </div>
-                            )}
-
+                              )}
+                            </div>
+                            
                             {/* Submit Actions Bar */}
-                            <div className="bg-[#252526] border-t border-[#333333] px-4 py-3 flex justify-end gap-3">
+                            <div className="bg-surface-gray border-t border-gray-200 px-4 py-3 flex justify-end gap-3">
                               <button 
                                 onClick={handleCodeSubmit}
-                                disabled={isSubmitting}
-                                className="bg-primary hover:bg-primary-hover text-white px-8 py-2 rounded-lg font-bold text-sm transition-all shadow-md disabled:opacity-50"
+                                disabled={isSubmitting || !problemDetail}
+                                className="bg-primary hover:bg-primary-hover text-white px-8 py-2 rounded-lg font-bold text-sm transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
                               >
-                                {isSubmitting ? 'Submitting...' : 'Submit'}
+                                {isSubmitting && <span className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full"></span>}
+                                {isSubmitting ? 'Submitting...' : 'Submit Code'}
                               </button>
                             </div>
                           </div>
 
-                          {/* Feedback Toast inside panel */}
-                          {editorToast && (
-                            <div className={`fixed bottom-6 right-6 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 z-50 animate-fade-in ${
-                              editorToast.type === 'success' ? 'bg-brand-green border border-brand-green/20' : 
-                              editorToast.type === 'info' ? 'bg-brand-blue border border-brand-blue/20' : 'bg-red-600 border border-red-700/20'
-                            }`}>
-                              <span className="material-symbols-outlined text-[20px]">
-                                {editorToast.type === 'success' ? 'check_circle' : editorToast.type === 'info' ? 'hourglass_empty' : 'error'}
-                              </span>
-                              <span className="text-sm font-semibold">{editorToast.message}</span>
+                          {/* Result Panel (Testcases logs and Overall result) */}
+                          {(testcasesLogs.length > 0 || overallResult) && (
+                            <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm flex flex-col mb-8 animate-fade-in">
+                               <div className="px-4 py-3 bg-surface-gray border-b border-gray-200 flex items-center justify-between">
+                                  <h3 className="font-bold text-sm text-text-main flex items-center gap-2">
+                                     <span className="material-symbols-outlined text-[18px]">terminal</span>
+                                     Execution Results
+                                  </h3>
+                                  {overallResult && (
+                                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${overallResult.overallVerdict === 'ACCEPTED' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                                        {overallResult.overallVerdict}
+                                     </span>
+                                  )}
+                               </div>
+                               <div className="p-4 space-y-4">
+                                  {testcasesLogs.map((log, idx) => (
+                                     <div key={idx} className="border border-gray-200 rounded-lg overflow-hidden transition-all">
+                                        <div 
+                                           className={`px-4 py-3 flex items-center justify-between cursor-pointer ${log.testcaseVerdict === 'ACCEPTED' ? 'bg-green-50 hover:bg-green-100/50' : 'bg-red-50 hover:bg-red-100/50'}`}
+                                           onClick={() => toggleTestcaseDetails(log.testcaseId)}
+                                        >
+                                           <div className="flex items-center gap-3">
+                                              <span className={`material-symbols-outlined text-[20px] ${log.testcaseVerdict === 'ACCEPTED' ? 'text-green-600' : 'text-red-600'}`}>
+                                                 {log.testcaseVerdict === 'ACCEPTED' ? 'check_circle' : 'cancel'}
+                                              </span>
+                                              <span className={`font-bold text-sm ${log.testcaseVerdict === 'ACCEPTED' ? 'text-green-700' : 'text-red-700'}`}>
+                                                 Test Case {idx + 1}: {log.testcaseVerdict === 'ACCEPTED' ? 'Accepted' : (log.testcaseVerdict ? log.testcaseVerdict.replace(/_/g, ' ') : 'N/A')}
+                                              </span>
+                                           </div>
+                                           <div className="flex items-center gap-4">
+                                              <span className="text-xs text-gray-500 font-mono bg-white px-2 py-1 rounded border border-gray-200 shadow-sm">{log.executionTimeMs} ms / {log.memoryUsedKb ? (log.memoryUsedKb / 1024).toFixed(1) : 0} MB</span>
+                                              <span className="material-symbols-outlined text-gray-400">
+                                                 {expandedTestcases[log.testcaseId] ? 'expand_less' : 'expand_more'}
+                                              </span>
+                                           </div>
+                                        </div>
+                                        {expandedTestcases[log.testcaseId] && (
+                                           <div className="p-4 bg-white border-t border-gray-200 space-y-4">
+                                              {log.expectedOutput && (
+                                                 <div>
+                                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">Expected Output</span>
+                                                    <div className="bg-surface-gray rounded border border-gray-200 p-3 font-mono text-sm text-gray-800 whitespace-pre-wrap">{log.expectedOutput}</div>
+                                                 </div>
+                                              )}
+                                              {log.actualOutput && (
+                                                 <div>
+                                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">Actual Output</span>
+                                                    <div className="bg-surface-gray rounded border border-gray-200 p-3 font-mono text-sm text-gray-800 whitespace-pre-wrap">{log.actualOutput}</div>
+                                                 </div>
+                                              )}
+                                              {log.compileOutput && (
+                                                 <div>
+                                                    <span className="text-xs font-bold text-red-500 uppercase tracking-wider mb-1 block">Error Message</span>
+                                                    <div className="bg-red-50 rounded border border-red-200 p-3 font-mono text-sm text-red-700 whitespace-pre-wrap">{log.compileOutput}</div>
+                                                 </div>
+                                              )}
+                                           </div>
+                                        )}
+                                     </div>
+                                  ))}
+                                  {isSubmitting && !overallResult && (
+                                     <div className="flex items-center gap-2 text-sm text-primary font-medium py-2">
+                                        <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                        </svg>
+                                        Running tests...
+                                     </div>
+                                  )}
+                               </div>
+                            </div>
+                          )}
+
+                          {/* Maintenance Error Toast */}
+                          {maintenanceError && (
+                            <div className="fixed bottom-6 right-6 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 z-50 animate-fade-in bg-red-600 border border-red-700/20">
+                              <span className="material-symbols-outlined text-[20px]">engineering</span>
+                              <span className="text-sm font-semibold">Judge server is under maintenance. Please try again later.</span>
+                              <button onClick={() => setMaintenanceError(false)} className="ml-2 bg-white/20 hover:bg-white/30 rounded-full p-1 transition-colors">
+                                <span className="material-symbols-outlined text-[14px]">close</span>
+                              </button>
                             </div>
                           )}
                         </div>

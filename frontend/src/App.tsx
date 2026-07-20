@@ -10,6 +10,7 @@ import { StudentDashboard } from './pages/StudentDashboard';
 import { InstructorDashboard } from './pages/InstructorDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { AdminFinancialReports } from './pages/AdminFinancialReports';
+import { AdminCreateProblemPage } from './pages/AdminCreateProblemPage';
 import { ApplyInstructor } from './pages/ApplyInstructor';
 import { Courses } from './pages/Courses';
 import { CourseDetail } from './pages/CourseDetail';
@@ -58,8 +59,11 @@ function App() {
               {/* Admin Panel (only for admin) */}
               <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
                 <Route path="admin/financial-reports" element={<AdminFinancialReports />} />
+                <Route path="admin/problems-create" element={<AdminCreateProblemPage mode="create" />} />
+                <Route path="admin/problems-edit/:id" element={<AdminCreateProblemPage mode="edit" />} />
                 <Route path="admin" element={<AdminDashboard />} />
                 <Route path="admin/:tab" element={<AdminDashboard />} />
+                <Route path="admin/:tab/:id" element={<AdminDashboard />} />
               </Route>
               
               {/* Courses Catalog & Details */}
