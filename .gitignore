@@ -1,0 +1,113 @@
+# ==========================================
+# Root .gitignore for SWP391 AI Audit Project
+# ==========================================
+
+# ------------------------------------------
+# Operating System Files
+# ------------------------------------------
+.DS_Store
+.DS_Store?
+$_ANDIME
+.NoSuchFile
+Thumbs.db
+ehthumbs.db
+Log.txt
+desktop.ini
+
+# ------------------------------------------
+# IDEs and Editors
+# ------------------------------------------
+# VS Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+
+# IntelliJ IDEA / WebStorm / PhpStorm / PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# Eclipse / Spring Tool Suite (STS)
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+# General editor backups
+*~
+*.swp
+*.swo
+*.tmp
+*.bak
+
+# ------------------------------------------
+# Node / Frontend (React / Vite / TypeScript)
+# ------------------------------------------
+# Dependencies
+node_modules/
+/frontend/node_modules/
+
+# Production / Build outputs
+/frontend/dist/
+/frontend/dist-ssr/
+/frontend/build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Diagnostics
+.eslintcache
+
+# ------------------------------------------
+# Backend (Java / Spring Boot / Maven)
+# ------------------------------------------
+# Build outputs
+target/
+/backend/target/
+build/
+/backend/build/
+
+# Maven wrapper JAR (optional, but standard in Spring Initializr)
+/backend/.mvn/wrapper/maven-wrapper.jar
+
+# ------------------------------------------
+# Environment Variables & Secrets (CRITICAL)
+# ------------------------------------------
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+backend/.env
+backend/.env.local
+
+# ------------------------------------------
+# Testing and Coverage
+# ------------------------------------------
+/frontend/coverage/
+/backend/coverage/
+.nyc_output
